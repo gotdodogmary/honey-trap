@@ -1,0 +1,34 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>PRO SECURITY</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v7.4.0/ol.css"><script src="https://cdn.jsdelivr.net/npm/ol@v7.4.0/dist/ol.js"></script>
+    <style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0d1117;color:#c9d1d9;font-family:sans-serif;padding:24px}.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}h1{color:#f0f6fc;font-size:18px}.btn{background:#21262d;color:#fff;border:1px solid #30363d;padding:8px 14px;border-radius:6px;cursor:pointer}#map{width:100%;height:400px;background:#161b22;border-radius:8px;border:1px solid #30363d;margin-bottom:16px}.table-wrap{background:#161b22;border:1px solid #30363d;border-radius:8px}table{width:100%;border-collapse:collapse;font-size:13px}th{background:#21262d;color:#8b949e;padding:10px}td{padding:12px;border-bottom:1px solid #21262d;word-break:break-all}td.addr{white-space:normal}.badge{padding:4px 8px;border-radius:10px;font-size:11px;font-weight:700}.badge-safe{background:rgba(63,185,80,.15);color:#3fb950}</style></head><body>
+<div class="header"><h1>HONEY-TRAP CANVAS INTEL</h1><div><button class="btn" onclick="if(confirm('진짜 다 지울까?')){fetch('/api/clear',{method:'POST'}).then(()=>location.reload())}">🗑 기록 삭제</button> <button class="btn" onclick="loadHistory(true)">🔄 새로고침</button></div></div>
+<div id="map"></div><div class="table-wrap"><table><thead><tr><th>TIME</th><th>IP</th><th>LOCATION</th><th>PLATFORM</th><th>STATUS</th></tr></thead><tbody id="tbody"></tbody></table></div>
+<script>
+    let map,vectorSource;
+    function esc(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+    function initMap(){
+        vectorSource=new ol.source.Vector();
+        const vl=new ol.layer.Vector({source:vectorSource,style:f=>new ol.style.Style({image:new ol.style.Circle({radius:8,fill:new ol.style.Fill({color:'#3fb950'}),stroke:new ol.style.Stroke({color:'#fff',width:2})}),text:new ol.style.Text({text:(f.get('name')||'').slice(0,30),offsetY:-14,font:'bold 11px sans-serif',fill:new ol.style.Fill({color:'#fff'}),stroke:new ol.style.Stroke({color:'#000',width:3})})})});
+        map=new ol.Map({target:'map',layers:[new ol.layer.Tile({source:new ol.source.OSM()}),vl],view:new ol.View({center:ol.proj.fromLonLat([127.148,35.824]),zoom:14})});
+        loadHistory();
+    }
+    function addMarker(lng,lat,title){try{const c=ol.proj.fromLonLat([+lng,+lat]);const f=new ol.Feature({geometry:new ol.geom.Point(c),name:title});vectorSource.addFeature(f);}catch(e){}}
+    function iconFor(p){p=(p||'').toLowerCase();if(p.includes('mac'))return '🍎 Mac';if(p.includes('iphone')||p.includes('gps'))return '📱 iPhone';return '📱 '+esc(p);}
+    function renderRow(l){
+        if(!l.lat)return;
+        addMarker(l.lng,l.lat,l.city);
+        const tr=`<tr><td>${esc(l.timestamp)}</td><td>${esc(l.ip)}</td><td class="addr" style="color:#79c0ff">📍 ${esc(l.city)}<br><small style="color:#666">${l.lat},${l.lng}</small></td><td>${iconFor(l.platform)}</td><td><span class="badge badge-safe">SECURE</span></td></tr>`;
+        document.getElementById('tbody').insertAdjacentHTML('beforeend',tr);
+    }
+    function loadHistory(){
+        document.getElementById('tbody').innerHTML='';vectorSource.clear();
+        fetch('/api/logs').then(r=>r.json()).then(logs=>{
+            logs.reverse().forEach(renderRow);
+            if(logs.length>0){
+                const last=logs[logs.length-1];
+                map.getView().animate({center:ol.proj.fromLonLat([+last.lng,+last.lat]),zoom:16,duration:500});
+            }
+        });
+    }
+    initMap(); setInterval(loadHistory,5000);
+</script></body></html>
