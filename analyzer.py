@@ -21,6 +21,16 @@ def get_detail_address(lng, lat):
         r = requests.get(url, timeout=3).json()
         if r.get('response',{}).get('result'):
             return r['response']['result'][0].get('text')
+            if road and '대한민국' in road:
+                return road
+    except: pass
+    try:
+        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lng}&zoom=18&accept-language=ko"
+        headers = {"User-Agent": "honey-trap/1.0"}
+        j = requests.get(url, headers=headers, timeout=4).json()
+        addr = j.get('display_name','')
+        if addr:
+            return addr.replace('대한민국, ','')
     except: pass
     return f"{lat},{lng}"
 
