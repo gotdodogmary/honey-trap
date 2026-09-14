@@ -17,7 +17,19 @@
     function renderRow(l){
         if(!l.lat)return;
         addMarker(l.lng,l.lat,l.city);
-        const tr=`<tr><td>${esc(l.timestamp)}</td><td>${esc(l.ip)}</td><td class="addr" style="color:#79c0ff">📍 ${esc(l.city)}<br><small style="color:#666">${l.lat},${l.lng}</small></td><td>${iconFor(l.platform)}</td><td><span class="badge badge-safe">SECURE</span></td></tr>`;
+        const myIp = "211.214.20.58";
+        const isMe = l.ip === myIp || l.ip === "127.0.0.1";
+        const badge = isMe
+            ? `<span class="badge badge-safe">SECURE</span>`
+            : `<span class="badge" style="background:rgba(248,81,73,.2);color:#f85149;padding:4px 8px;border-radius:10px;font-weight:700">⚠️ INTRUSION</span>`;
+
+        const tr=`<tr>
+      <td>${esc(l.timestamp)}</td>
+      <td>${esc(l.ip)} ${isMe?'(내 IP)':''}</td>
+      <td class="addr" style="color:${isMe?'#8b949e':'#79c0ff'}">📍 ${esc(l.city)}<br><small style="color:#666">${l.lat},${l.lng}</small></td>
+      <td>${iconFor(l.platform)}</td>
+      <td>${badge}</td>
+    </tr>`;
         document.getElementById('tbody').insertAdjacentHTML('beforeend',tr);
     }
     function loadHistory(){
