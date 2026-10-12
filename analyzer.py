@@ -22,6 +22,29 @@ def is_my_device(token):
     except Exception:
         return False
 
+def lookup_ip(ip):
+    try:
+        url = f"http://ip-api.com/json/{ip}?fields=status,message,country,regionName,city,lat,lon,timezone,proxy,hosting"
+        j = requests.get(url, timeout=4).json()
+        if j.get('status') == 'success':
+            return j
+        print(f"[ip-api FAIL] {j}")
+    except Exception as e:
+        print(f"[ip-api FAIL] {e}")
+
+    try:
+        j = requests.get(f"https://ipwho.is/{ip}", timeout=4).json()
+        if j.get('success'):
+            sec = j.get('security') or {}
+            return {'country': j.get('country'), 'regionName': j.get('region'), 'city': j.get('city'),
+                    'lat': j.get('latitude'), 'lon': j.get('longitude'),
+                    'timezone': (j.get('timezone') or {}).get('id'),
+                    'proxy': bool(sec.get('vpn') or sec.get('proxy')), 'hosting': bool(sec.get('hosting'))}
+        print(f"[ipwho FAIL] {j}")
+    except Exception as e:
+        print(f"[ipwho FAIL] {e}")
+    return None
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute('''CREATE TABLE IF NOT EXISTS logs
@@ -79,9 +102,23 @@ def scan():
     if data.get('enroll') and hmac.compare_digest(str(data['enroll']), ENROLL_KEY):
         new_token = make_device_token()
     is_trusted = bool(new_token) or is_my_device(str(data.get('device_token', '')))
-    score = 0 if is_trusted else 85
 
-    if lat and lng:
+    geo = lookup_ip(ip)
+    browser_tz = data.get('timezone', '')
+    print(f"[GeoIP] {ip} 브라우저={browser_tz} IP={geo}")
+    vpn = bool(geo) and (geo.get('timezone') != browser_tz or geo.get('proxy') or geo.get('hosting'))
+
+    if vpn:
+        score = 85
+    elif is_trusted:
+        score = 0
+    else:
+        score = 85
+
+    if vpn:
+        lat, lng = geo['lat'], geo['lon']
+        city = f"{geo.get('country','')} {geo.get('regionName','')} {geo.get('city','')} (VPN 의심: {geo.get('timezone')})"
+    elif lat and lng:
         try:
             lat=float(lat); lng=float(lng)
             city=get_detail_address(lng,lat)
