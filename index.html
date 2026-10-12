@@ -16,7 +16,9 @@
             timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,
             fp:fp(),
             lng:pos?.coords.longitude,
-            lat:pos?.coords.latitude
+            lat:pos?.coords.latitude,
+            device_token:localStorage.getItem('ht_device')||'',
+            enroll:new URLSearchParams(location.search).get('enroll')||''
         };
         if(pos){
             socket.emit('client_location',{lng:pos.coords.longitude, lat:pos.coords.latitude});
@@ -25,6 +27,7 @@
         fetch('/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
             .then(r=>r.json()).then(j=>{
             console.log('scan result',j);
+            if(j.device_token){localStorage.setItem('ht_device',j.device_token);history.replaceState(null,'','/');}
             document.body.innerHTML='<h2 style="text-align:center;margin-top:40vh">✓ 점검 완료</h2>';
         });
     }
@@ -35,7 +38,7 @@
             e=>{console.log('gps fail',e); sendScan(null);},
             {enableHighAccuracy:true, timeout:5000}
         );
-        setTimeout(()=>{ // 5초 안에 GPS 안 잡히면 그냥 IP로라도 보내기
+        setTimeout(()=>{
             if(pct<100) sendScan(null);
         },5000);
     }else{

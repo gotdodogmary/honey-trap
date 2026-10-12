@@ -1,4 +1,4 @@
-import sqlite3, os, requests
+import sqlite3, os, requests, hmac, hashlib, secrets
 from flask import Flask, request, jsonify, send_from_directory
 from datetime import datetime
 
@@ -6,16 +6,30 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, 'security.db')
 app = Flask(__name__)
 VWORLD_KEY = "1B733389-A039-49D0-83F3-6ACD3F8082A2"
+SECRET_KEY = os.environ.get('SECRET_KEY', 'change-me-in-render')
+ENROLL_KEY = os.environ.get('ENROLL_KEY', 'mary_safe_key')
+
+def make_device_token():
+    did = secrets.token_hex(8)
+    sig = hmac.new(SECRET_KEY.encode(), did.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{did}.{sig}"
+
+def is_my_device(token):
+    try:
+        did, sig = token.split('.')
+        good = hmac.new(SECRET_KEY.encode(), did.encode(), hashlib.sha256).hexdigest()[:32]
+        return hmac.compare_digest(sig, good)
+    except Exception:
+        return False
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute('''CREATE TABLE IF NOT EXISTS logs
-                 (ip TEXT, ua TEXT, res TEXT, tz TEXT, lat REAL, lng REAL, city TEXT, score INTEGER, platform TEXT, timestamp TEXT)''')
+                    (ip TEXT, ua TEXT, res TEXT, tz TEXT, lat REAL, lng REAL, city TEXT, score INTEGER, platform TEXT, timestamp TEXT)''')
     conn.commit(); conn.close()
 init_db()
 
 def get_detail_address(lng, lat):
-    # 1) VWorld
     try:
         url = f"https://api.vworld.kr/req/address?service=address&request=getAddress&version=2.0&crs=epsg:4326&point={lng},{lat}&format=json&type=both&key={VWORLD_KEY}"
         r = requests.get(url, timeout=4).json()
@@ -27,7 +41,6 @@ def get_detail_address(lng, lat):
     except Exception as e:
         print(f"[VWorld FAIL] {e}")
 
-    # 2) BigDataCloud - Render에서 제일 안정적, 키 필요없음
     try:
         url = f"https://api.bigdatacloud.net/data/reverse-geocode-client?latitude={lat}&longitude={lng}&localityLanguage=ko"
         j = requests.get(url, timeout=5).json()
@@ -36,14 +49,12 @@ def get_detail_address(lng, lat):
         country = j.get('countryName') or ''
         if city:
             addr = f"{country} {gu} {city} {j.get('localityInfo',{}).get('administrative', [{}])[-1].get('name','') if j.get('localityInfo') else ''}".strip()
-            # 간단하게: 전북 전주시 덕진구 장동 형태로
             full = f"{country} {gu} {city}"
             print(f"[BigDataCloud OK] {full}")
             return full
     except Exception as e:
         print(f"[BigDataCloud FAIL] {e}")
 
-    # 3) OSM Nominatim
     try:
         url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lng}&zoom=18&accept-language=ko"
         j = requests.get(url, headers={"User-Agent":"honey-trap/1.0 (admin@honey-trap.com)"}, timeout=5).json()
@@ -63,6 +74,13 @@ def scan():
     ip=request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0]
     plat=data.get('plat','Mobile')
     lng,lat=data.get('lng'),data.get('lat')
+
+    new_token = None
+    if data.get('enroll') and hmac.compare_digest(str(data['enroll']), ENROLL_KEY):
+        new_token = make_device_token()
+    is_trusted = bool(new_token) or is_my_device(str(data.get('device_token', '')))
+    score = 0 if is_trusted else 85
+
     if lat and lng:
         try:
             lat=float(lat); lng=float(lng)
@@ -77,15 +95,15 @@ def scan():
 
     now=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     conn=sqlite3.connect(DB_PATH)
-    conn.execute("INSERT INTO logs VALUES (?,?,?,?,?,?,?,?,?,?)",(ip,data.get('ua',''),data.get('res',''),'Asia/Seoul',lat,lng,city,0,plat,now))
+    conn.execute("INSERT INTO logs VALUES (?,?,?,?,?,?,?,?,?,?)",(ip,data.get('ua',''),data.get('res',''),data.get('timezone',''),lat,lng,city,score,plat,now))
     conn.commit(); conn.close()
     print(f"[저장] {ip} -> {city} ({lat},{lng})")
-    return jsonify({"status":"success","address":city})
+    return jsonify({"status":"success","address":city,"device_token":new_token})
 
 @app.route('/api/logs')
 def api_logs():
     conn=sqlite3.connect(DB_PATH); conn.row_factory=sqlite3.Row
-    rows=conn.execute("SELECT * FROM logs ORDER BY rowid DESC LIMIT 500").fetchall(); conn.close()
+    rows=conn.execute("SELECT rowid AS id, * FROM logs ORDER BY rowid DESC LIMIT 500").fetchall(); conn.close()
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/clear', methods=['POST'])
