@@ -3,3 +3,5 @@ Flask-SocketIO
 requests
 gunicorn
 eventlet
+psycopg2-binary
+tzdata

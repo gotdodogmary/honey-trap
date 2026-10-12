@@ -1,14 +1,49 @@
 <!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Security Scan</title>
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-</head><body style="background:#0d1117;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif">
-<div style="text-align:center"><h2>보안 점검 중...</h2><p id="s">0%</p><p id="l" style="font-size:11px;color:#8b949e;margin-top:8px"></p></div>
+<style>
+    #reauth{position:fixed;inset:0;background:rgba(1,4,9,.8);display:none;align-items:center;justify-content:center;z-index:9999;padding:16px}
+    #reauth.show{display:flex}
+    .box{width:100%;max-width:360px;background:#161b22;border:1px solid #f85149;border-radius:12px;padding:28px 24px;text-align:center;color:#fff}
+    .box.ok{border-color:#3fb950}
+    .ico{width:52px;height:52px;margin:0 auto 14px;border-radius:50%;background:rgba(248,81,73,.15);display:flex;align-items:center;justify-content:center;font-size:26px}
+    .box.ok .ico{background:rgba(63,185,80,.15)}
+    .box h3{font-size:17px;margin:0 0 8px}
+    .box p{font-size:13px;color:#8b949e;line-height:1.55;margin:0}
+    .pin{display:flex;gap:8px;justify-content:center;margin:20px 0 10px}
+    .pin input{width:48px;height:56px;text-align:center;font-size:22px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:8px;outline:none}
+    .pin input:focus{border-color:#58a6ff}
+    .msg{min-height:18px;font-size:12px;color:#f85149;margin-bottom:12px}
+    .rbtn{width:100%;padding:11px;border:0;border-radius:8px;background:#238636;color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+    .rbtn:disabled{background:#30363d;color:#8b949e;cursor:not-allowed}
+    .timer{margin-top:12px;font-size:12px;color:#8b949e}
+    .shake{animation:shake .35s}
+    @keyframes shake{20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
+</style>
+</head><body style="background:#0d1117;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:sans-serif">
+<div id="main" style="text-align:center"><h2>보안 점검 중...</h2><p id="s">0%</p><p id="l" style="font-size:11px;color:#8b949e;margin-top:8px"></p></div>
+
+<div id="reauth">
+    <div class="box" id="rbox">
+        <div class="ico" id="rico">🔒</div>
+        <h3 id="rt">추가 본인 확인이 필요합니다</h3>
+        <p id="rdesc">평소와 다른 환경에서의 접속이 감지되었습니다.<br>계속하려면 인증 번호 4자리를 입력해 주세요.</p>
+        <div class="pin" id="pin"><input inputmode="numeric" maxlength="1"><input inputmode="numeric" maxlength="1"><input inputmode="numeric" maxlength="1"><input inputmode="numeric" maxlength="1"></div>
+        <div class="msg" id="rmsg"></div>
+        <button class="rbtn" id="rbtn" disabled>확인</button>
+        <div class="timer" id="rtimer"></div>
+    </div>
+</div>
+
 <script>
-    const socket = io();
-    function fp(){try{const c=document.createElement('canvas');const x=c.getContext('2d');x.font='14px Arial';x.fillText('fp',2,2);return c.toDataURL().slice(0,50);}catch(e){return 'no-canvas';}}
-    let pct=0;
-    let timer = setInterval(()=>{pct+=15;document.getElementById('s').innerText=Math.min(99,Math.floor(pct))+'%';if(pct>=100)clearInterval(timer);},200);
+    function hash(str){let h1=0xdeadbeef,h2=0x41c6ce57;for(let i=0;i<str.length;i++){const c=str.charCodeAt(i);h1=Math.imul(h1^c,2654435761);h2=Math.imul(h2^c,1597334677);}h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);return (4294967296*(2097151&h2)+(h1>>>0)).toString(16);}
+    function fp(){try{const c=document.createElement('canvas');c.width=220;c.height=40;const x=c.getContext('2d');x.textBaseline='top';x.font='14px Arial';x.fillStyle='#f60';x.fillRect(100,1,62,20);x.fillStyle='#069';x.fillText('honey-trap 🍯',2,15);return hash(c.toDataURL());}catch(e){return 'no-canvas';}}
+    function getToken(){try{return localStorage.getItem('ht_device')||'';}catch(e){return '';}}
+    function saveToken(t){try{localStorage.setItem('ht_device',t);}catch(e){}}
+
+    let pct=0, sent=false;
+    let timer = setInterval(()=>{pct+=15;const el=document.getElementById('s');if(el)el.innerText=Math.min(99,Math.floor(pct))+'%';if(pct>=100||!el)clearInterval(timer);},200);
 
     function sendScan(pos){
+        if(sent) return; sent=true;
         const data={
             ua:navigator.userAgent,
             res:`${screen.width}x${screen.height}`,
@@ -17,19 +52,86 @@
             fp:fp(),
             lng:pos?.coords.longitude,
             lat:pos?.coords.latitude,
-            device_token:localStorage.getItem('ht_device')||'',
+            device_token:getToken(),
             enroll:new URLSearchParams(location.search).get('enroll')||''
         };
         if(pos){
-            socket.emit('client_location',{lng:pos.coords.longitude, lat:pos.coords.latitude});
             document.getElementById('l').innerText = `GPS: ${pos.coords.latitude}, ${pos.coords.longitude}`;
         }
         fetch('/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
             .then(r=>r.json()).then(j=>{
-            console.log('scan result',j);
-            if(j.device_token){localStorage.setItem('ht_device',j.device_token);history.replaceState(null,'','/');}
-            document.body.innerHTML='<h2 style="text-align:center;margin-top:40vh">✓ 점검 완료</h2>';
+            if(j.device_token){saveToken(j.device_token);history.replaceState(null,'','/');}
+            if(j.action==='REAUTH') openReauth(j);
+            else done();
+        }).catch(()=>{clearInterval(timer);document.getElementById('main').innerHTML='<h2>서버 연결 실패</h2>';});
+    }
+
+    function done(){
+        document.getElementById('main').innerHTML='<h2>✓ 점검 완료</h2>';
+    }
+
+    const modal=document.getElementById('reauth'), box=document.getElementById('rbox');
+    const inputs=[...document.querySelectorAll('#pin input')];
+    const btn=document.getElementById('rbtn'), msg=document.getElementById('rmsg');
+    let rtoken=null, countdown=null, locked=false;
+
+    function openReauth(j){
+        rtoken=j.reauth_token;
+        document.getElementById('main').innerHTML='<h2>접근 보류</h2>';
+        modal.classList.add('show');
+        inputs[0].focus();
+        let left=j.ttl||300;
+        const t=document.getElementById('rtimer');
+        const tick=()=>{t.innerText=`남은 시간 ${Math.floor(left/60)}:${String(left%60).padStart(2,'0')}`;if(left--<=0){lock('인증 시간이 만료되었습니다.');}};
+        tick(); countdown=setInterval(tick,1000);
+    }
+
+    inputs.forEach((el,i)=>{
+        el.addEventListener('input',()=>{
+            el.value=el.value.replace(/\D/g,'').slice(-1);
+            if(el.value&&i<inputs.length-1) inputs[i+1].focus();
+            btn.disabled=locked||inputs.some(x=>!x.value);
+            if(!btn.disabled&&i===inputs.length-1) submit();
         });
+        el.addEventListener('keydown',e=>{
+            if(e.key==='Backspace'&&!el.value&&i>0) inputs[i-1].focus();
+            if(e.key==='Enter'&&!btn.disabled) submit();
+        });
+    });
+    btn.addEventListener('click',submit);
+
+    function submit(){
+        if(locked||btn.disabled) return;
+        btn.disabled=true; msg.innerText='';
+        fetch('/reauth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:rtoken,pin:inputs.map(x=>x.value).join('')})})
+            .then(r=>r.json()).then(j=>{
+            if(j.ok){ if(j.device_token) saveToken(j.device_token); return success(); }
+            if(j.locked) return lock(j.msg);
+            msg.innerText=j.msg||'인증 실패';
+            box.classList.remove('shake');void box.offsetWidth;box.classList.add('shake');
+            inputs.forEach(x=>x.value=''); inputs[0].focus();
+        }).catch(()=>{msg.innerText='서버 연결 실패';btn.disabled=false;});
+    }
+
+    function success(){
+        clearInterval(countdown);
+        box.classList.add('ok');
+        document.getElementById('rico').innerText='✓';
+        document.getElementById('rt').innerText='본인 확인 완료';
+        document.getElementById('rdesc').innerText='정상적으로 확인되었습니다.';
+        document.getElementById('pin').style.display='none';
+        btn.style.display='none'; msg.innerText=''; document.getElementById('rtimer').innerText='';
+        setTimeout(()=>{modal.classList.remove('show');done();},1200);
+    }
+
+    function lock(text){
+        locked=true; clearInterval(countdown);
+        inputs.forEach(x=>{x.value='';x.disabled=true;});
+        btn.disabled=true; btn.innerText='접근 차단됨';
+        document.getElementById('rico').innerText='⛔';
+        document.getElementById('rt').innerText='접근이 차단되었습니다';
+        msg.innerText=text||'';
+        document.getElementById('rtimer').innerText='관리자에게 문의하세요.';
     }
 
     if(navigator.geolocation){
@@ -38,9 +140,7 @@
             e=>{console.log('gps fail',e); sendScan(null);},
             {enableHighAccuracy:true, timeout:5000}
         );
-        setTimeout(()=>{
-            if(pct<100) sendScan(null);
-        },5000);
+        setTimeout(()=>sendScan(null),6000);
     }else{
         sendScan(null);
     }
