@@ -1,63 +1,271 @@
 <!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>PRO SECURITY</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v7.4.0/ol.css"><script src="https://cdn.jsdelivr.net/npm/ol@v7.4.0/dist/ol.js"></script>
-    <style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0d1117;color:#c9d1d9;font-family:sans-serif;padding:24px}.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}h1{color:#f0f6fc;font-size:18px}.btn{background:#21262d;color:#fff;border:1px solid #30363d;padding:8px 14px;border-radius:6px;cursor:pointer}#map{width:100%;height:400px;background:#161b22;border-radius:8px;border:1px solid #30363d;margin-bottom:16px}.table-wrap{background:#161b22;border:1px solid #30363d;border-radius:8px;overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:13px}th{background:#21262d;color:#8b949e;padding:10px}td{padding:12px;border-bottom:1px solid #21262d;word-break:break-all;vertical-align:top}td.addr{white-space:normal}.badge{display:inline-block;padding:4px 8px;border-radius:10px;font-size:11px;font-weight:700;white-space:nowrap}.b-SECURE{background:rgba(63,185,80,.15);color:#3fb950}.b-SUSPICIOUS{background:rgba(210,153,34,.18);color:#d29922}.b-INTRUSION{background:rgba(248,81,73,.2);color:#f85149}.sub{display:block;font-size:11px;color:#6e7681;margin-top:4px}.reason{display:block;font-size:11px;color:#8b949e;margin-top:3px}.reason b{color:#f85149}.score{font-weight:700;font-size:15px}</style></head><body>
-<div class="header"><h1>HONEY-TRAP CANVAS INTEL</h1><div><button class="btn" onclick="if(confirm('다 지울까요?')){fetch('/api/clear',{method:'POST'}).then(()=>location.reload())}">🗑 기록 삭제</button> <button class="btn" onclick="loadHistory(true)">🔄 새로고침</button></div></div>
-<div id="map"></div><div class="table-wrap"><table><thead><tr><th>TIME</th><th>IP</th><th>LOCATION</th><th>PLATFORM</th><th>SCORE</th><th>STATUS</th></tr></thead><tbody id="tbody"></tbody></table></div>
+<title>HONEY-TRAP CANVAS INTEL</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v7.4.0/ol.css"><script src="https://cdn.jsdelivr.net/npm/ol@v7.4.0/dist/ol.js"></script>
+<style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo',sans-serif;padding:24px}
+    .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px;flex-wrap:wrap}
+    h1{color:#f0f6fc;font-size:18px}
+    h2{color:#f0f6fc;font-size:13px;font-weight:600;margin-bottom:12px}
+    .btns{display:flex;gap:6px;flex-wrap:wrap}
+    .btn{background:#21262d;color:#fff;border:1px solid #30363d;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;text-decoration:none;display:inline-block}
+    .btn:hover{border-color:#8b949e}
+    .btn.sm{padding:3px 8px;font-size:11px}
+    .btn.danger{color:#ff7b72}
+    .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px}
+    .stat{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 14px}
+    .stat .k{font-size:11px;color:#8b949e}
+    .stat .v{font-size:24px;font-weight:700;color:#f0f6fc;margin-top:4px;font-variant-numeric:tabular-nums}
+    .stat .s{font-size:11px;color:#6e7681;margin-top:2px}
+    #mapwrap{position:relative;margin-bottom:16px}
+    #map{width:100%;height:400px;background:#161b22;border-radius:8px;border:1px solid #30363d}
+    .legend{position:absolute;right:10px;bottom:28px;background:rgba(13,17,23,.9);border:1px solid #30363d;border-radius:6px;padding:8px 10px;font-size:11px;line-height:1.8}
+    .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+    .panels{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:12px;margin-bottom:16px}
+    .panel{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;min-width:0;position:relative}
+    .chart-legend{display:flex;gap:12px;font-size:11px;color:#8b949e;margin-bottom:6px;flex-wrap:wrap}
+    .chart-legend span{display:inline-flex;align-items:center;gap:5px}
+    .chart-legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+    #trend svg{width:100%;height:180px;display:block}
+    .tip{position:absolute;pointer-events:none;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.6;display:none;z-index:5;white-space:nowrap}
+    .rbar{display:grid;grid-template-columns:110px 1fr 28px;align-items:center;gap:8px;font-size:12px;margin-bottom:7px}
+    .rbar .track{height:8px;background:#21262d;border-radius:4px;overflow:hidden}
+    .rbar .fill{height:100%;background:#58a6ff;border-radius:0 4px 4px 0}
+    .rbar .n{text-align:right;color:#8b949e;font-variant-numeric:tabular-nums}
+    .empty{font-size:12px;color:#6e7681}
+    .block{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;padding:7px 0;border-bottom:1px solid #21262d}
+    .block:last-child{border-bottom:0}
+    .block .meta{color:#6e7681;font-size:11px}
+    .table-wrap{background:#161b22;border:1px solid #30363d;border-radius:8px;overflow-x:auto}
+    table{width:100%;border-collapse:collapse;font-size:13px;min-width:900px}
+    th{background:#21262d;color:#8b949e;padding:10px;font-size:11px;text-align:left}
+    td{padding:11px 10px;border-bottom:1px solid #21262d;word-break:break-all;vertical-align:top}
+    .badge{display:inline-block;padding:4px 8px;border-radius:10px;font-size:11px;font-weight:700;white-space:nowrap}
+    .b-SECURE{background:rgba(46,160,67,.15);color:#3fb950}
+    .b-SUSPICIOUS{background:rgba(227,179,65,.15);color:#e3b341}
+    .b-INTRUSION{background:rgba(248,81,73,.18);color:#ff7b72}
+    .sim{display:inline-block;padding:2px 6px;border-radius:8px;font-size:10px;background:#1f2a44;color:#79c0ff;margin-left:4px}
+    .sub{display:block;font-size:11px;color:#6e7681;margin-top:4px}
+    .reason{display:block;font-size:11px;color:#8b949e;margin-top:3px}
+    .reason b{color:#c9d1d9}
+    .score{font-weight:700;font-size:15px;color:#f0f6fc}
+    .acts{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
+    @media (max-width:900px){.stats{grid-template-columns:repeat(2,1fr)}.panels{grid-template-columns:1fr}}
+    @media (max-width:600px){body{padding:16px}#map{height:300px}}
+</style></head><body>
+<div class="header"><h1>HONEY-TRAP CANVAS INTEL</h1>
+    <div class="btns">
+        <a class="btn" href="/demo">🎯 공격 시연</a>
+        <a class="btn" href="/api/export.csv">⬇ CSV 내보내기</a>
+        <button class="btn" onclick="refreshAll()">🔄 새로고침</button>
+        <button class="btn danger" onclick="clearLogs()">🗑 기록 삭제</button>
+    </div>
+</div>
+
+<div class="stats">
+    <div class="stat"><div class="k">오늘 접속</div><div class="v" id="sTotal">0</div><div class="s" id="sTotalSub">7일 합계 0</div></div>
+    <div class="stat"><div class="k">⚠ 침입 의심 (INTRUSION)</div><div class="v" id="sIntr">0</div><div class="s">재인증 창이 뜬 접속</div></div>
+    <div class="stat"><div class="k">● 의심 (SUSPICIOUS)</div><div class="v" id="sSus">0</div><div class="s">기록만 남긴 접속</div></div>
+    <div class="stat"><div class="k">재인증 통과 / 차단</div><div class="v" id="sAuth">0 / 0</div><div class="s" id="sRate">통과율 -</div></div>
+    <div class="stat"><div class="k">⛔ 현재 차단 중</div><div class="v" id="sBlock">0</div><div class="s">IP·기기 수</div></div>
+</div>
+
+<div id="mapwrap"><div id="map"></div>
+    <div class="legend"><div><span class="dot" style="background:#2ea043"></span>SECURE</div><div><span class="dot" style="background:#e3b341"></span>SUSPICIOUS</div><div><span class="dot" style="background:#f85149"></span>INTRUSION</div><div><span style="color:#f85149">━▶</span> 같은 기기 위치 급변</div></div>
+</div>
+
+<div class="panels">
+    <div class="panel" id="trendPanel">
+        <h2>최근 7일 판정 추이</h2>
+        <div class="chart-legend"><span><i style="background:#2ea043"></i>SECURE</span><span><i style="background:#e3b341"></i>SUSPICIOUS</span><span><i style="background:#f85149"></i>INTRUSION</span></div>
+        <div id="trend"></div>
+        <div class="tip" id="tip"></div>
+    </div>
+    <div class="panel"><h2>주요 탐지 사유 (7일)</h2><div id="reasons"><div class="empty">아직 탐지 기록이 없습니다.</div></div></div>
+    <div class="panel"><h2>차단 목록</h2><div id="blocks"><div class="empty">차단된 IP·기기가 없습니다.</div></div></div>
+</div>
+
+<div class="table-wrap"><table>
+    <thead><tr><th>TIME</th><th>IP</th><th>LOCATION</th><th>PLATFORM</th><th>SCORE</th><th>STATUS</th><th>조치</th></tr></thead>
+    <tbody id="tbody"></tbody></table></div>
+
 <script>
-    const COLOR={SECURE:'#3fb950',SUSPICIOUS:'#d29922',INTRUSION:'#f85149'};
-    let map,vectorSource;
+    const COLOR={SECURE:'#2ea043',SUSPICIOUS:'#e3b341',INTRUSION:'#f85149'};
+    const ORDER=['SECURE','SUSPICIOUS','INTRUSION'];
+    const H={'X-Requested-With':'honey-trap','Content-Type':'application/json'};
+    const MOVE_KM=30;
+    let map,vectorSource,pathSource;
+    const lastPos=new Map();
     function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
     function statusOf(l){return l.status||(l.score===0?'SECURE':'INTRUSION');}
+
     function initMap(){
         vectorSource=new ol.source.Vector();
-        const vl=new ol.layer.Vector({source:vectorSource,style:f=>new ol.style.Style({image:new ol.style.Circle({radius:8,fill:new ol.style.Fill({color:COLOR[f.get('status')]||'#3fb950'}),stroke:new ol.style.Stroke({color:'#fff',width:2})}),text:new ol.style.Text({text:(f.get('name')||'').slice(0,30),offsetY:-14,font:'bold 11px sans-serif',fill:new ol.style.Fill({color:'#fff'}),stroke:new ol.style.Stroke({color:'#000',width:3})})})});
-        map=new ol.Map({target:'map',layers:[new ol.layer.Tile({source:new ol.source.OSM()}),vl],view:new ol.View({center:ol.proj.fromLonLat([127.148,35.824]),zoom:14})});
-        loadHistory();
+        const vl=new ol.layer.Vector({source:vectorSource,style:f=>new ol.style.Style({image:new ol.style.Circle({radius:8,fill:new ol.style.Fill({color:COLOR[f.get('status')]||COLOR.SECURE}),stroke:new ol.style.Stroke({color:'#fff',width:2})}),text:new ol.style.Text({text:(f.get('name')||'').slice(0,30),offsetY:-14,font:'bold 11px sans-serif',fill:new ol.style.Fill({color:'#fff'}),stroke:new ol.style.Stroke({color:'#000',width:3})})})});
+        pathSource=new ol.source.Vector();
+        const pl=new ol.layer.Vector({source:pathSource,style:pathStyle});
+        map=new ol.Map({target:'map',layers:[new ol.layer.Tile({source:new ol.source.OSM()}),pl,vl],view:new ol.View({center:ol.proj.fromLonLat([127.148,35.824]),zoom:7})});
     }
-    function addMarker(lng,lat,title,status){try{const c=ol.proj.fromLonLat([+lng,+lat]);const f=new ol.Feature({geometry:new ol.geom.Point(c),name:title,status:status});vectorSource.addFeature(f);}catch(e){}}
-    function iconFor(p){p=(p||'').toLowerCase();if(p.includes('mac'))return '🍎 Mac';if(p.includes('iphone')||p.includes('gps'))return '📱 iPhone';return '📱 '+esc(p);}
+    function pathStyle(f){
+        const c=f.getGeometry().getCoordinates(), a=c[0], b=c[1];
+        const col=f.get('danger')?'#f85149':'#8b949e';
+        return [
+            new ol.style.Style({stroke:new ol.style.Stroke({color:col,width:3,lineDash:f.get('danger')?undefined:[6,6]})}),
+            new ol.style.Style({geometry:new ol.geom.Point(b),image:new ol.style.RegularShape({points:3,radius:9,fill:new ol.style.Fill({color:col}),rotation:Math.PI/2-Math.atan2(b[1]-a[1],b[0]-a[0])})})
+        ];
+    }
+    function km(a,b){
+        const R=6371,r=x=>x*Math.PI/180,dLat=r(b.lat-a.lat),dLng=r(b.lng-a.lng);
+        const h=Math.sin(dLat/2)**2+Math.cos(r(a.lat))*Math.cos(r(b.lat))*Math.sin(dLng/2)**2;
+        return 2*R*Math.asin(Math.sqrt(h));
+    }
+    function addPath(l){
+        if(!l.device) return;
+        const p=lastPos.get(l.device);
+        lastPos.set(l.device,{lat:+l.lat,lng:+l.lng});
+        if(!p||km(p,{lat:+l.lat,lng:+l.lng})<MOVE_KM) return;
+        const a=ol.proj.fromLonLat([p.lng,p.lat]), b=ol.proj.fromLonLat([+l.lng,+l.lat]);
+        const end=[a[0]+(b[0]-a[0])*0.95,a[1]+(b[1]-a[1])*0.95];
+        pathSource.addFeature(new ol.Feature({geometry:new ol.geom.LineString([a,end]),danger:statusOf(l)!=='SECURE'}));
+    }
+    function addMarker(lng,lat,title,status){try{vectorSource.addFeature(new ol.Feature({geometry:new ol.geom.Point(ol.proj.fromLonLat([+lng,+lat])),name:title,status:status}));}catch(e){}}
+    function iconFor(p){p=(p||'').toLowerCase();if(p.includes('simulation'))return '🧪 시뮬레이션';if(p.includes('mac'))return '🍎 Mac';if(p.includes('iphone'))return '📱 iPhone';if(p.includes('win'))return '💻 Windows';return '📱 '+esc(p);}
     function authTag(v){
         if(v==1) return '<span class="sub" style="color:#3fb950">✓ 재인증 통과</span>';
-        if(v==-1) return '<span class="sub" style="color:#f85149">⛔ 재인증 실패·차단</span>';
+        if(v==-1) return '<span class="sub" style="color:#ff7b72">⛔ 재인증 실패·차단</span>';
         return '';
     }
     function rowHtml(l){
         const st=statusOf(l);
         const reasons=(l.reasons||[]).map(r=>`<span class="reason"><b>+${esc(r.points)}</b> ${esc(r.detail)}</span>`).join('');
+        const sim=l.simulated==1;
+        const acts=sim?'':`<div class="acts"><button class="btn sm danger" data-block="ip:${esc(l.ip)}">IP 차단</button>${l.device?`<button class="btn sm danger" data-block="dev:${esc(l.device)}">기기 차단</button>`:''}</div>`;
         return `<tr id="r${esc(l.id)}">
-      <td>${esc(l.timestamp)}</td>
-      <td>${esc(l.ip)}</td>
-      <td class="addr" style="color:${st==='SECURE'?'#8b949e':'#79c0ff'}">📍 ${esc(l.city)}<br><small style="color:#666">${esc(l.lat)},${esc(l.lng)}</small></td>
+      <td>${esc(l.timestamp)}${sim?'<span class="sim">시뮬레이션</span>':''}</td>
+      <td>${esc(l.ip)}${l.lang?`<span class="sub">${esc(l.lang)}</span>`:''}</td>
+      <td>📍 ${esc(l.city)}<span class="sub">${esc(l.lat)}, ${esc(l.lng)}</span></td>
       <td>${iconFor(l.platform)}</td>
-      <td><span class="score" style="color:${COLOR[st]}">${esc(l.score)}</span>${reasons}</td>
-      <td><span class="badge b-${st}">${st==='INTRUSION'?'⚠️ ':''}${st}</span>${authTag(l.verified)}</td>
+      <td><span class="score">${esc(l.score)}</span>${reasons}</td>
+      <td><span class="badge b-${st}">${st==='INTRUSION'?'⚠ ':''}${st}</span>${authTag(l.verified)}</td>
+      <td>${acts}</td>
     </tr>`;
     }
     function renderRow(l){
-        if(!l.lat)return;
+        if(l.lat==null) return;
         addMarker(l.lng,l.lat,l.city,statusOf(l));
+        addPath(l);
         document.getElementById('tbody').insertAdjacentHTML('beforeend',rowHtml(l));
     }
+
     const seen=new Map();
-    let first=true;
+    let maxId=0, first=true;
     function loadHistory(force){
-        if(force){seen.clear();document.getElementById('tbody').innerHTML='';vectorSource.clear();first=true;}
-        fetch('/api/logs').then(r=>r.json()).then(logs=>{
+        if(force){maxId=0;seen.clear();lastPos.clear();document.getElementById('tbody').innerHTML='';vectorSource.clear();pathSource.clear();first=true;}
+        return fetch('/api/logs?after='+maxId).then(r=>r.json()).then(logs=>{
+            logs.forEach(l=>{if(l.id>maxId)maxId=l.id;});
             logs.reverse();
+            let changed=false;
             logs.forEach(l=>{
-                if(!seen.has(l.id)){seen.set(l.id,l.verified);renderRow(l);}
+                if(!seen.has(l.id)){seen.set(l.id,l.verified);renderRow(l);changed=true;}
                 else if(seen.get(l.id)!==l.verified){
-                    seen.set(l.id,l.verified);
+                    seen.set(l.id,l.verified);changed=true;
                     const tr=document.getElementById('r'+l.id);
                     if(tr) tr.outerHTML=rowHtml(l);
                 }
             });
-            if(first&&logs.length>0){
-                const last=logs[logs.length-1];
-                map.getView().animate({center:ol.proj.fromLonLat([+last.lng,+last.lat]),zoom:16,duration:500});
+            if(first&&vectorSource.getFeatures().length>0){
+                map.getView().fit(vectorSource.getExtent(),{padding:[60,60,60,60],maxZoom:15,duration:500});
                 first=false;
             }
+            if(changed) loadStats();
         });
     }
-    initMap(); setInterval(()=>loadHistory(false),5000);
+
+    function loadStats(){
+        fetch('/api/stats?days=7').then(r=>r.json()).then(s=>{
+            const t=s.today;
+            document.getElementById('sTotal').innerText=t.total;
+            document.getElementById('sTotalSub').innerText=`7일 합계 ${s.period.total}`;
+            document.getElementById('sIntr').innerText=t.intrusion;
+            document.getElementById('sSus').innerText=t.suspicious;
+            document.getElementById('sAuth').innerText=`${t.passed} / ${t.blocked}`;
+            const tried=t.passed+t.blocked;
+            document.getElementById('sRate').innerText=tried?`통과율 ${Math.round(t.passed/tried*100)}%`:'통과율 -';
+            document.getElementById('sBlock').innerText=s.active_blocks;
+            drawTrend(s.daily);
+            drawReasons(s.top_reasons);
+        });
+        loadBlocks();
+    }
+
+    function drawTrend(daily){
+        const W=520,Hh=180,pl=28,pb=22,pt=16,pr=6;
+        const max=Math.max(1,...daily.map(d=>d.SECURE+d.SUSPICIOUS+d.INTRUSION));
+        const step=Math.ceil(max/4)||1, top=step*4;
+        const cw=(W-pl-pr)/daily.length, bw=Math.min(36,cw*0.56);
+        const y=v=>pt+(Hh-pt-pb)*(1-v/top);
+        let svg=`<svg viewBox="0 0 ${W} ${Hh}" role="img" aria-label="최근 7일 판정별 접속 수">`;
+        for(let i=0;i<=4;i++){const v=step*i;svg+=`<line x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}" stroke="#21262d"/><text x="${pl-6}" y="${y(v)+4}" font-size="10" fill="#6e7681" text-anchor="end">${v}</text>`;}
+        daily.forEach((d,i)=>{
+            const x=pl+cw*i+(cw-bw)/2; let acc=0;
+            const total=d.SECURE+d.SUSPICIOUS+d.INTRUSION;
+            const segs=ORDER.filter(k=>d[k]>0);
+            segs.forEach((k,j)=>{
+                const y0=y(acc), y1=y(acc+d[k]); acc+=d[k];
+                const h=Math.max(y0-y1-(j<segs.length-1?2:0),1);
+                const isTop=j===segs.length-1;
+                svg+=isTop?`<path d="M${x},${y0} V${y0-h+4} Q${x},${y0-h} ${x+4},${y0-h} H${x+bw-4} Q${x+bw},${y0-h} ${x+bw},${y0-h+4} V${y0} Z" fill="${COLOR[k]}"/>`
+                           :`<rect x="${x}" y="${y0-h}" width="${bw}" height="${h}" fill="${COLOR[k]}"/>`;
+            });
+            if(total) svg+=`<text x="${x+bw/2}" y="${y(total)-5}" font-size="10" fill="#c9d1d9" text-anchor="middle">${total}</text>`;
+            svg+=`<text x="${x+bw/2}" y="${Hh-6}" font-size="10" fill="#8b949e" text-anchor="middle">${d.date.slice(5).replace('-','/')}</text>`;
+            svg+=`<rect class="hit" data-i="${i}" x="${pl+cw*i}" y="${pt}" width="${cw}" height="${Hh-pt-pb}" fill="transparent"/>`;
+        });
+        svg+='</svg>';
+        const box=document.getElementById('trend'); box.innerHTML=svg;
+        const tip=document.getElementById('tip'), panel=document.getElementById('trendPanel');
+        box.querySelectorAll('.hit').forEach(el=>{
+            el.addEventListener('mousemove',e=>{
+                const d=daily[+el.dataset.i], pr=panel.getBoundingClientRect();
+                tip.innerHTML=`<b>${d.date}</b><br>INTRUSION ${d.INTRUSION}<br>SUSPICIOUS ${d.SUSPICIOUS}<br>SECURE ${d.SECURE}`;
+                tip.style.display='block';
+                tip.style.left=Math.min(e.clientX-pr.left+12,pr.width-140)+'px';
+                tip.style.top=(e.clientY-pr.top+12)+'px';
+            });
+            el.addEventListener('mouseleave',()=>tip.style.display='none');
+        });
+    }
+
+    function drawReasons(list){
+        const box=document.getElementById('reasons');
+        if(!list.length){box.innerHTML='<div class="empty">아직 탐지 기록이 없습니다.</div>';return;}
+        const max=Math.max(...list.map(r=>r.count));
+        box.innerHTML=list.map(r=>`<div class="rbar"><span>${esc(r.name)}</span><div class="track"><div class="fill" style="width:${r.count/max*100}%"></div></div><span class="n">${r.count}</span></div>`).join('');
+    }
+
+    function loadBlocks(){
+        fetch('/api/blocks').then(r=>r.json()).then(list=>{
+            const box=document.getElementById('blocks');
+            if(!list.length){box.innerHTML='<div class="empty">차단된 IP·기기가 없습니다.</div>';return;}
+            box.innerHTML=list.map(b=>`<div class="block"><div>${esc(b.key)}<div class="meta">${b.type==='manual'?'수동':'자동'} · ${esc(b.reason)} · ${esc(b.since)}</div></div><button class="btn sm" data-unblock="${esc(b.key)}">해제</button></div>`).join('');
+        });
+    }
+
+    document.addEventListener('click',e=>{
+        const b=e.target.closest('[data-block]'), u=e.target.closest('[data-unblock]');
+        if(b&&confirm(`${b.dataset.block} 을(를) 차단할까요?`)){
+            fetch('/api/block',{method:'POST',headers:H,body:JSON.stringify({key:b.dataset.block})}).then(()=>loadStats());
+        }
+        if(u){
+            fetch('/api/unblock',{method:'POST',headers:H,body:JSON.stringify({key:u.dataset.unblock})}).then(()=>loadStats());
+        }
+    });
+
+    function clearLogs(){
+        if(confirm('기록을 모두 지울까요? 자동 차단 기록도 함께 지워집니다.'))
+            fetch('/api/clear',{method:'POST',headers:H}).then(()=>refreshAll());
+    }
+    function refreshAll(){ loadHistory(true).then(loadStats); }
+
+    initMap(); refreshAll(); setInterval(()=>loadHistory(false),5000);
 </script></body></html>

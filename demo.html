@@ -1,0 +1,60 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>공격 시연</title>
+<style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo',sans-serif;padding:24px}
+    .header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+    h1{color:#f0f6fc;font-size:18px}
+    .lead{font-size:13px;color:#8b949e;margin-bottom:18px;line-height:1.6}
+    .btn{background:#21262d;color:#fff;border:1px solid #30363d;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;text-decoration:none;display:inline-block}
+    .btn:hover{border-color:#8b949e}
+    .btn.go{background:#238636;border-color:#2ea043}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+    .card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px}
+    .card h3{font-size:15px;color:#f0f6fc}
+    .card p{font-size:12px;color:#8b949e;line-height:1.5}
+    .result{border-top:1px solid #21262d;padding-top:10px;display:none}
+    .result.show{display:block}
+    .row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+    .score{font-size:26px;font-weight:700;color:#f0f6fc;font-variant-numeric:tabular-nums;min-width:48px}
+    .bar{flex:1;height:8px;background:#21262d;border-radius:4px;overflow:hidden;position:relative}
+    .bar i{display:block;height:100%;border-radius:0 4px 4px 0}
+    .bar .line{position:absolute;top:-3px;bottom:-3px;width:2px;background:#8b949e}
+    .badge{display:inline-block;padding:4px 8px;border-radius:10px;font-size:11px;font-weight:700;white-space:nowrap}
+    .b-SECURE{background:rgba(46,160,67,.15);color:#3fb950}
+    .b-SUSPICIOUS{background:rgba(227,179,65,.15);color:#e3b341}
+    .b-INTRUSION{background:rgba(248,81,73,.18);color:#ff7b72}
+    .reason{font-size:12px;padding:3px 0;display:flex;gap:8px}
+    .reason b{min-width:34px;color:#f0f6fc}
+    .action{font-size:12px;margin-top:8px;color:#c9d1d9}
+    .none{font-size:12px;color:#6e7681}
+    @media (max-width:600px){body{padding:16px}}
+</style></head><body>
+<div class="header"><h1>🎯 공격 시나리오 시연</h1>
+    <div><button class="btn go" id="all">전체 실행</button> <a class="btn" href="/admin">← 관제 화면</a></div>
+</div>
+<p class="lead">실제 VPN이나 네트워크 없이 공격 상황을 재현해, 탐지 엔진이 어떤 근거로 몇 점을 매기는지 보여줍니다.<br>결과는 관제 화면에 <b>시뮬레이션</b> 표시와 함께 기록되고, 통계에는 포함되지 않습니다. 세로선은 재인증 기준인 60점입니다.</p>
+<div class="grid" id="grid"></div>
+<script>
+    const H={'X-Requested-With':'honey-trap','Content-Type':'application/json'};
+    const COLOR={SECURE:'#2ea043',SUSPICIOUS:'#e3b341',INTRUSION:'#f85149'};
+    const ACTION={ALLOW:'→ 정상 처리 (점검 완료)',REAUTH:'→ 재인증 창 강제 표시',BLOCKED:'→ 접근 차단 화면 표시'};
+    function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+
+    function run(id){
+        return fetch('/api/simulate',{method:'POST',headers:H,body:JSON.stringify({scenario:id})}).then(r=>r.json()).then(j=>{
+            const box=document.getElementById('res-'+id);
+            const reasons=j.reasons.length?j.reasons.map(r=>`<div class="reason"><b>+${r.points}</b><span>${esc(r.name)}${r.detail&&r.detail!==r.name?' · '+esc(r.detail):''}</span></div>`).join(''):'<div class="none">감점 항목 없음</div>';
+            box.innerHTML=`<div class="row"><span class="score">${j.score}</span><div class="bar"><i style="width:${j.score}%;background:${COLOR[j.status]}"></i><span class="line" style="left:60%"></span></div><span class="badge b-${j.status}">${j.status}</span></div>
+                ${reasons}<div class="action">${ACTION[j.action]}</div>`;
+            box.classList.add('show');
+        });
+    }
+
+    fetch('/api/scenarios').then(r=>r.json()).then(list=>{
+        document.getElementById('grid').innerHTML=list.map(s=>`<div class="card"><h3>${esc(s.title)}</h3><p>${esc(s.desc)}</p>
+            <div><button class="btn go" data-run="${esc(s.id)}">실행</button></div><div class="result" id="res-${esc(s.id)}"></div></div>`).join('');
+        document.getElementById('all').onclick=async()=>{for(const s of list){await run(s.id);}};
+    });
+    document.addEventListener('click',e=>{const b=e.target.closest('[data-run]');if(b)run(b.dataset.run);});
+</script></body></html>

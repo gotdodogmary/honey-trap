@@ -11,6 +11,8 @@
     .pin{display:flex;gap:8px;justify-content:center;margin:20px 0 10px}
     .pin input{width:48px;height:56px;text-align:center;font-size:22px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:8px;outline:none}
     .pin input:focus{border-color:#58a6ff}
+    .pin.six{gap:6px}
+    .pin.six input{width:40px;height:52px;font-size:20px}
     .msg{min-height:18px;font-size:12px;color:#f85149;margin-bottom:12px}
     .rbtn{width:100%;padding:11px;border:0;border-radius:8px;background:#238636;color:#fff;font-size:14px;font-weight:600;cursor:pointer}
     .rbtn:disabled{background:#30363d;color:#8b949e;cursor:not-allowed}
@@ -19,14 +21,21 @@
     @keyframes shake{20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
 </style>
 </head><body style="background:#0d1117;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:sans-serif">
-<div id="main" style="text-align:center"><h2>보안 점검 중...</h2><p id="s">0%</p><p id="l" style="font-size:11px;color:#8b949e;margin-top:8px"></p></div>
+<div id="main" style="text-align:center"><h2>보안 점검 중...</h2><p id="s">0%</p></div>
+
+<div id="enroll" style="display:none;text-align:center;max-width:320px;padding:16px">
+    <h3 style="margin:0 0 8px">기준 기기 등록</h3>
+    <p style="font-size:13px;color:#8b949e;margin:0 0 16px">이 기기를 관리자 기기로 등록합니다.<br>등록키를 입력해 주세요.</p>
+    <input id="ekey" type="password" autocomplete="off" style="width:100%;box-sizing:border-box;padding:11px;border-radius:8px;border:1px solid #30363d;background:#0d1117;color:#fff;font-size:15px">
+    <button class="rbtn" id="ebtn" style="margin-top:12px">등록</button>
+</div>
 
 <div id="reauth">
     <div class="box" id="rbox">
         <div class="ico" id="rico">🔒</div>
         <h3 id="rt">추가 본인 확인이 필요합니다</h3>
-        <p id="rdesc">평소와 다른 환경에서의 접속이 감지되었습니다.<br>계속하려면 인증 번호 4자리를 입력해 주세요.</p>
-        <div class="pin" id="pin"><input inputmode="numeric" maxlength="1"><input inputmode="numeric" maxlength="1"><input inputmode="numeric" maxlength="1"><input inputmode="numeric" maxlength="1"></div>
+        <p id="rdesc">평소와 다른 환경에서의 접속이 감지되었습니다.</p>
+        <div class="pin" id="pin"></div>
         <div class="msg" id="rmsg"></div>
         <button class="rbtn" id="rbtn" disabled>확인</button>
         <div class="timer" id="rtimer"></div>
@@ -38,45 +47,115 @@
     function fp(){try{const c=document.createElement('canvas');c.width=220;c.height=40;const x=c.getContext('2d');x.textBaseline='top';x.font='14px Arial';x.fillStyle='#f60';x.fillRect(100,1,62,20);x.fillStyle='#069';x.fillText('honey-trap 🍯',2,15);return hash(c.toDataURL());}catch(e){return 'no-canvas';}}
     function getToken(){try{return localStorage.getItem('ht_device')||'';}catch(e){return '';}}
     function saveToken(t){try{localStorage.setItem('ht_device',t);}catch(e){}}
+    function clientId(){
+        try{
+            let id=localStorage.getItem('ht_cid');
+            if(!id){id=(crypto.randomUUID?crypto.randomUUID():hash(String(Math.random())+Date.now())+hash(navigator.userAgent));localStorage.setItem('ht_cid',id);}
+            return id;
+        }catch(e){return '';}
+    }
+
+    function rtcIps(){
+        return new Promise(resolve=>{
+            const found=new Set();
+            let pc;
+            const finish=()=>{try{pc&&pc.close();}catch(e){}resolve([...found]);};
+            try{
+                pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+                pc.createDataChannel('ht');
+                pc.onicecandidate=e=>{
+                    if(!e.candidate){finish();return;}
+                    const m=e.candidate.candidate.match(/ ([0-9a-fA-F.:]+) \d+ typ (srflx|host|prflx)/);
+                    if(m&&!m[1].endsWith('.local')) found.add(m[1]);
+                };
+                pc.createOffer().then(o=>pc.setLocalDescription(o)).catch(finish);
+                setTimeout(finish,1500);
+            }catch(e){finish();}
+        });
+    }
 
     let pct=0, sent=false;
     let timer = setInterval(()=>{pct+=15;const el=document.getElementById('s');if(el)el.innerText=Math.min(99,Math.floor(pct))+'%';if(pct>=100||!el)clearInterval(timer);},200);
 
-    function sendScan(pos){
+    async function sendScan(enrollKey){
         if(sent) return; sent=true;
+        const rtc=await rtcIps();
         const data={
             ua:navigator.userAgent,
             res:`${screen.width}x${screen.height}`,
             plat:navigator.platform,
             timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,
+            lang:navigator.language||'',
+            rtc:rtc,
             fp:fp(),
-            lng:pos?.coords.longitude,
-            lat:pos?.coords.latitude,
+            cid:clientId(),
             device_token:getToken(),
-            enroll:new URLSearchParams(location.search).get('enroll')||''
+            enroll:enrollKey||''
         };
-        if(pos){
-            document.getElementById('l').innerText = `GPS: ${pos.coords.latitude}, ${pos.coords.longitude}`;
-        }
         fetch('/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
             .then(r=>r.json()).then(j=>{
-            if(j.device_token){saveToken(j.device_token);history.replaceState(null,'','/');}
+            if(j.device_token) saveToken(j.device_token);
+            if(enrollKey) history.replaceState(null,'','/');
             if(j.action==='REAUTH') openReauth(j);
+            else if(j.action==='BLOCKED') blocked();
+            else if(enrollKey) done(j.device_token?'✓ 기기 등록 완료':'등록하지 못했습니다');
             else done();
         }).catch(()=>{clearInterval(timer);document.getElementById('main').innerHTML='<h2>서버 연결 실패</h2>';});
     }
 
-    function done(){
-        document.getElementById('main').innerHTML='<h2>✓ 점검 완료</h2>';
+    function done(text){
+        clearInterval(timer);
+        document.getElementById('main').innerHTML='<h2>'+(text||'✓ 점검 완료')+'</h2>';
+    }
+
+    function blocked(){
+        clearInterval(timer);
+        document.getElementById('main').innerHTML='<h2>접근 차단</h2>';
+        modal.classList.add('show');
+        lock('인증 실패가 반복되어 이 기기와 네트워크의 접근이 차단되었습니다.');
     }
 
     const modal=document.getElementById('reauth'), box=document.getElementById('rbox');
-    const inputs=[...document.querySelectorAll('#pin input')];
+    let inputs=[];
     const btn=document.getElementById('rbtn'), msg=document.getElementById('rmsg');
     let rtoken=null, countdown=null, locked=false;
 
+    function buildPin(n){
+        const wrap=document.getElementById('pin');
+        wrap.innerHTML='';
+        if(n>4) wrap.classList.add('six');
+        inputs=[];
+        for(let i=0;i<n;i++){
+            const el=document.createElement('input');
+            el.inputMode='numeric'; el.maxLength=1; el.autocomplete='one-time-code';
+            wrap.appendChild(el); inputs.push(el);
+        }
+        inputs.forEach((el,i)=>{
+            el.addEventListener('input',()=>{
+                el.value=el.value.replace(/\D/g,'').slice(-1);
+                if(el.value&&i<inputs.length-1) inputs[i+1].focus();
+                btn.disabled=locked||inputs.some(x=>!x.value);
+                if(!btn.disabled&&i===inputs.length-1) submit();
+            });
+            el.addEventListener('keydown',e=>{
+                if(e.key==='Backspace'&&!el.value&&i>0) inputs[i-1].focus();
+                if(e.key==='Enter'&&!btn.disabled) submit();
+            });
+            el.addEventListener('paste',e=>{
+                const v=(e.clipboardData.getData('text')||'').replace(/\D/g,'').slice(0,inputs.length);
+                if(!v) return; e.preventDefault();
+                [...v].forEach((c,k)=>inputs[k].value=c);
+                btn.disabled=inputs.some(x=>!x.value);
+            });
+        });
+    }
+
     function openReauth(j){
         rtoken=j.reauth_token;
+        const n=j.digits||4;
+        buildPin(n);
+        document.getElementById('rdesc').innerHTML='평소와 다른 환경에서의 접속이 감지되었습니다.<br>'+
+            (j.channel?`${j.channel}으로 보낸 인증 번호 ${n}자리를 입력해 주세요.`:`등록된 인증 번호 ${n}자리를 입력해 주세요.`);
         document.getElementById('main').innerHTML='<h2>접근 보류</h2>';
         modal.classList.add('show');
         inputs[0].focus();
@@ -86,18 +165,6 @@
         tick(); countdown=setInterval(tick,1000);
     }
 
-    inputs.forEach((el,i)=>{
-        el.addEventListener('input',()=>{
-            el.value=el.value.replace(/\D/g,'').slice(-1);
-            if(el.value&&i<inputs.length-1) inputs[i+1].focus();
-            btn.disabled=locked||inputs.some(x=>!x.value);
-            if(!btn.disabled&&i===inputs.length-1) submit();
-        });
-        el.addEventListener('keydown',e=>{
-            if(e.key==='Backspace'&&!el.value&&i>0) inputs[i-1].focus();
-            if(e.key==='Enter'&&!btn.disabled) submit();
-        });
-    });
     btn.addEventListener('click',submit);
 
     function submit(){
@@ -130,18 +197,28 @@
         btn.disabled=true; btn.innerText='접근 차단됨';
         document.getElementById('rico').innerText='⛔';
         document.getElementById('rt').innerText='접근이 차단되었습니다';
+        document.getElementById('rdesc').innerText='보안 정책에 따라 이 접속을 허용할 수 없습니다.';
+        document.getElementById('pin').style.display='none';
         msg.innerText=text||'';
         document.getElementById('rtimer').innerText='관리자에게 문의하세요.';
     }
 
-    if(navigator.geolocation){
-        navigator.geolocation.getCurrentPosition(
-            p=>sendScan(p),
-            e=>{console.log('gps fail',e); sendScan(null);},
-            {enableHighAccuracy:true, timeout:5000}
-        );
-        setTimeout(()=>sendScan(null),6000);
+    if(location.hash==='#enroll'){
+        clearInterval(timer);
+        document.getElementById('main').style.display='none';
+        document.getElementById('enroll').style.display='block';
+        const ekey=document.getElementById('ekey');
+        ekey.focus();
+        const go=()=>{
+            if(!ekey.value) return;
+            document.getElementById('enroll').style.display='none';
+            document.getElementById('main').style.display='block';
+            document.getElementById('main').innerHTML='<h2>등록 중...</h2>';
+            sendScan(ekey.value);
+        };
+        document.getElementById('ebtn').addEventListener('click',go);
+        ekey.addEventListener('keydown',e=>{if(e.key==='Enter')go();});
     }else{
-        sendScan(null);
+        sendScan();
     }
 </script></body></html>
