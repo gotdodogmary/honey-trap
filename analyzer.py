@@ -451,7 +451,7 @@ def same_origin_required(f):
 def security_headers(resp):
     resp.headers['X-Content-Type-Options'] = 'nosniff'
     resp.headers['X-Frame-Options'] = 'DENY'
-    resp.headers['Referrer-Policy'] = 'no-referrer'
+    resp.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     if request.path.startswith('/api') or request.path in ('/admin', '/demo'):
         resp.headers['Cache-Control'] = 'no-store'
     return resp
