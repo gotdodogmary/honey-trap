@@ -2,7 +2,7 @@
 <style>
     #reauth{position:fixed;inset:0;background:rgba(1,4,9,.8);display:none;align-items:center;justify-content:center;z-index:9999;padding:16px}
     #reauth.show{display:flex}
-    .box{width:100%;max-width:360px;background:#161b22;border:1px solid #f85149;border-radius:12px;padding:28px 24px;text-align:center;color:#fff}
+    .box{width:100%;max-width:360px;min-width:0;background:#161b22;border:1px solid #f85149;border-radius:12px;padding:28px 24px;text-align:center;color:#fff}
     .box.ok{border-color:#3fb950}
     .ico{width:52px;height:52px;margin:0 auto 14px;border-radius:50%;background:rgba(248,81,73,.15);display:flex;align-items:center;justify-content:center;font-size:26px}
     .box.ok .ico{background:rgba(63,185,80,.15)}
@@ -11,8 +11,9 @@
     .pin{display:flex;gap:8px;justify-content:center;margin:20px 0 10px}
     .pin input{width:48px;height:56px;text-align:center;font-size:22px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:8px;outline:none}
     .pin input:focus{border-color:#58a6ff}
+    .pin input{flex:0 1 48px;min-width:0}
     .pin.six{gap:6px}
-    .pin.six input{width:40px;height:52px;font-size:20px}
+    .pin.six input{flex-basis:44px;height:52px;font-size:20px}
     .msg{min-height:18px;font-size:12px;color:#f85149;margin-bottom:12px}
     .rbtn{width:100%;padding:11px;border:0;border-radius:8px;background:#238636;color:#fff;font-size:14px;font-weight:600;cursor:pointer}
     .rbtn:disabled{background:#30363d;color:#8b949e;cursor:not-allowed}
@@ -22,6 +23,11 @@
 </style>
 </head><body style="background:#0d1117;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:sans-serif">
 <div id="main" style="text-align:center"><h2>보안 점검 중...</h2><p id="s">0%</p></div>
+
+<p id="privacy" style="position:fixed;left:0;right:0;bottom:0;margin:0;padding:12px 16px;font-size:11px;line-height:1.6;color:#6e7681;text-align:center;background:#0d1117">
+    이 사이트는 이상 접속 탐지를 위해 접속 IP, 대략적인 위치, 브라우저 정보(시간대·언어·화면·기기 특성)를 수집합니다.<br>
+    수집한 정보는 보안 점검에만 쓰이며 90일이 지나면 자동으로 삭제됩니다. 정확한 위치(GPS)는 수집하지 않습니다.
+</p>
 
 <div id="enroll" style="display:none;text-align:center;max-width:320px;padding:16px">
     <h3 style="margin:0 0 8px">기준 기기 등록</h3>

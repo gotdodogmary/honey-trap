@@ -33,11 +33,13 @@
 <div class="header"><h1>🎯 공격 시나리오 시연</h1>
     <div><button class="btn go" id="all">전체 실행</button> <a class="btn" href="/admin">← 관제 화면</a></div>
 </div>
-<p class="lead">실제 VPN이나 네트워크 없이 공격 상황을 재현해, 탐지 엔진이 어떤 근거로 몇 점을 매기는지 보여줍니다.<br>결과는 관제 화면에 <b>시뮬레이션</b> 표시와 함께 기록되고, 통계에는 포함되지 않습니다. 세로선은 재인증 기준인 60점입니다.</p>
+<p class="lead">실제 VPN이나 네트워크 없이 공격 상황을 재현해, 탐지 엔진이 어떤 근거로 몇 점을 매기는지 보여줍니다.<br>결과는 관제 화면에 <b>시뮬레이션</b> 표시와 함께 기록되고, 통계에는 포함되지 않습니다. 세로선은 재인증 기준인 <span id="lineTxt">60</span>점입니다.</p>
 <div class="grid" id="grid"></div>
 <script>
     const H={'X-Requested-With':'honey-trap','Content-Type':'application/json'};
     const COLOR={SECURE:'#2ea043',SUSPICIOUS:'#e3b341',INTRUSION:'#f85149'};
+    let LINE=60;
+    fetch('/api/settings').then(r=>r.json()).then(s=>{LINE=s.reauth_line;document.getElementById('lineTxt').innerText=LINE;});
     const ACTION={ALLOW:'→ 정상 처리 (점검 완료)',REAUTH:'→ 재인증 창 강제 표시',BLOCKED:'→ 접근 차단 화면 표시'};
     function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 
@@ -45,7 +47,7 @@
         return fetch('/api/simulate',{method:'POST',headers:H,body:JSON.stringify({scenario:id})}).then(r=>r.json()).then(j=>{
             const box=document.getElementById('res-'+id);
             const reasons=j.reasons.length?j.reasons.map(r=>`<div class="reason"><b>+${r.points}</b><span>${esc(r.name)}${r.detail&&r.detail!==r.name?' · '+esc(r.detail):''}</span></div>`).join(''):'<div class="none">감점 항목 없음</div>';
-            box.innerHTML=`<div class="row"><span class="score">${j.score}</span><div class="bar"><i style="width:${j.score}%;background:${COLOR[j.status]}"></i><span class="line" style="left:60%"></span></div><span class="badge b-${j.status}">${j.status}</span></div>
+            box.innerHTML=`<div class="row"><span class="score">${j.score}</span><div class="bar"><i style="width:${j.score}%;background:${COLOR[j.status]}"></i><span class="line" style="left:${LINE}%"></span></div><span class="badge b-${j.status}">${j.status}</span></div>
                 ${reasons}<div class="action">${ACTION[j.action]}</div>`;
             box.classList.add('show');
         });

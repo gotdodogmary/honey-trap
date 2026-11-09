@@ -50,7 +50,19 @@
     .reason b{color:#c9d1d9}
     .score{font-weight:700;font-size:15px;color:#f0f6fc}
     .acts{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
-    @media (max-width:900px){.stats{grid-template-columns:repeat(2,1fr)}.panels{grid-template-columns:1fr}}
+    .tune{display:grid;grid-template-columns:260px 1fr;gap:16px;align-items:start}
+    .tune select{background:#0d1117;color:#f0f6fc;border:1px solid #30363d;border-radius:6px;padding:7px 10px;font-size:14px}
+    .tune .note{font-size:12px;color:#8b949e;line-height:1.6;margin-top:10px}
+    .ttable{width:100%;border-collapse:collapse;font-size:12px;min-width:0}
+    .ttable th,.ttable td{padding:7px 6px;border-bottom:1px solid #21262d;text-align:right;white-space:nowrap}
+    .ttable th:first-child,.ttable td:first-child{text-align:left}
+    .ttable tr.cur td{background:rgba(88,166,255,.1);color:#f0f6fc;font-weight:600}
+    .cases{margin-top:12px;font-size:12px}
+    .cases summary{cursor:pointer;color:#8b949e}
+    .case{display:grid;grid-template-columns:52px 1fr 40px;gap:8px;padding:5px 0;border-bottom:1px solid #21262d}
+    .case .lab{font-size:11px;color:#8b949e}
+    .case .sc{text-align:right;font-variant-numeric:tabular-nums;color:#f0f6fc}
+    @media (max-width:900px){.stats{grid-template-columns:repeat(2,1fr)}.panels{grid-template-columns:1fr}.tune{grid-template-columns:1fr}}
     @media (max-width:600px){body{padding:16px}#map{height:300px}}
 </style></head><body>
 <div class="header"><h1>HONEY-TRAP CANVAS INTEL</h1>
@@ -85,6 +97,22 @@
     <div class="panel"><h2>차단 목록</h2><div id="blocks"><div class="empty">차단된 IP·기기가 없습니다.</div></div></div>
 </div>
 
+<div class="panel" style="margin-bottom:16px">
+    <h2>임계치 튜닝</h2>
+    <div class="tune">
+        <div>
+            <label style="font-size:12px;color:#8b949e;display:block;margin-bottom:6px">재인증 기준 점수</label>
+            <select id="lineSel"></select> <button class="btn" id="lineSave">적용</button>
+            <div class="note" id="lineNote">기준 점수 이상이면 재인증 창이 뜹니다. 30점 이상은 의심(SUSPICIOUS)으로 기록됩니다.</div>
+            <div class="note" id="sysNote"></div>
+        </div>
+        <div style="overflow-x:auto">
+            <table class="ttable"><thead><tr><th>재인증 기준</th><th>공격 탐지</th><th>정상 사용자 오탐</th><th>실제 기록 재인증</th></tr></thead><tbody id="tuneBody"></tbody></table>
+            <details class="cases"><summary>평가에 쓴 시나리오 16개 보기</summary><div id="caseList"></div></details>
+        </div>
+    </div>
+</div>
+
 <div class="table-wrap"><table>
     <thead><tr><th>TIME</th><th>IP</th><th>LOCATION</th><th>PLATFORM</th><th>SCORE</th><th>STATUS</th><th>조치</th></tr></thead>
     <tbody id="tbody"></tbody></table></div>
@@ -101,10 +129,17 @@
 
     function initMap(){
         vectorSource=new ol.source.Vector();
-        const vl=new ol.layer.Vector({source:vectorSource,style:f=>new ol.style.Style({image:new ol.style.Circle({radius:8,fill:new ol.style.Fill({color:COLOR[f.get('status')]||COLOR.SECURE}),stroke:new ol.style.Stroke({color:'#fff',width:2})}),text:new ol.style.Text({text:(f.get('name')||'').slice(0,30),offsetY:-14,font:'bold 11px sans-serif',fill:new ol.style.Fill({color:'#fff'}),stroke:new ol.style.Stroke({color:'#000',width:3})})})});
+        const vl=new ol.layer.Vector({source:vectorSource,style:f=>new ol.style.Style({image:new ol.style.Circle({radius:8,fill:new ol.style.Fill({color:COLOR[f.get('status')]||COLOR.SECURE}),stroke:new ol.style.Stroke({color:'#fff',width:2})}),text:new ol.style.Text({text:pinLabel(f.get('name')),offsetY:-14,font:'bold 11px sans-serif',fill:new ol.style.Fill({color:'#fff'}),stroke:new ol.style.Stroke({color:'#000',width:3})})})});
         pathSource=new ol.source.Vector();
         const pl=new ol.layer.Vector({source:pathSource,style:pathStyle});
         map=new ol.Map({target:'map',layers:[new ol.layer.Tile({source:new ol.source.OSM()}),pl,vl],view:new ol.View({center:ol.proj.fromLonLat([127.148,35.824]),zoom:7})});
+    }
+    function pinLabel(name){
+        name=name||'';
+        const vpn=/\(VPN 의심/.test(name);
+        let base=name.replace(/\s*\(VPN 의심[^)]*\)?/,'').replace(/^\[시뮬레이션\]\s*/,'');
+        if(base.length>24) base=base.slice(0,23)+'…';
+        return base+(vpn?' · VPN 의심':'');
     }
     function pathStyle(f){
         const c=f.getGeometry().getCoordinates(), a=c[0], b=c[1];
@@ -261,11 +296,34 @@
         }
     });
 
+    function loadTuning(){
+        fetch('/api/tuning').then(r=>r.json()).then(t=>{
+            const sel=document.getElementById('lineSel');
+            if(!sel.dataset.ready){
+                for(let v=40;v<=90;v+=5) sel.insertAdjacentHTML('beforeend',`<option value="${v}">${v}점</option>`);
+                sel.dataset.ready='1';
+            }
+            sel.value=String(t.current);
+            document.getElementById('tuneBody').innerHTML=t.rows.map(r=>`<tr class="${r.line===t.current?'cur':''}"><td>${r.line}점${r.line===t.current?' (현재)':''}</td><td>${r.detected} / ${r.attacks}</td><td>${r.false_alarms} / ${r.normals}</td><td>${r.real_reauth} / ${r.real_total}건</td></tr>`).join('');
+            document.getElementById('caseList').innerHTML=t.cases.map(c=>`<div class="case"><span class="lab">${c.label==='attack'?'공격':'정상'}</span><span>${esc(c.name)}<br><span class="lab">${esc(c.reasons.join(', ')||'감점 없음')}</span></span><span class="sc">${c.score}</span></div>`).join('');
+        });
+        fetch('/api/settings').then(r=>r.json()).then(s=>{
+            document.getElementById('sysNote').innerText=`위치 조회: ${s.geolite==='사용 중'?'GeoLite2 로컬 DB':'웹 API (GeoLite2 '+s.geolite+')'} · 인증 번호: ${s.otp.length?s.otp.join('·')+' 발송':'고정 번호'} · 기록 보관 ${s.retention_days}일`;
+        });
+    }
+    document.getElementById('lineSave').addEventListener('click',()=>{
+        const v=+document.getElementById('lineSel').value;
+        if(!confirm(`재인증 기준을 ${v}점으로 바꿀까요? 바로 적용됩니다.`)) return;
+        fetch('/api/settings',{method:'POST',headers:H,body:JSON.stringify({reauth_line:v})}).then(r=>r.json()).then(j=>{
+            if(j.error) alert(j.error); loadTuning();
+        });
+    });
+
     function clearLogs(){
         if(confirm('기록을 모두 지울까요? 자동 차단 기록도 함께 지워집니다.'))
             fetch('/api/clear',{method:'POST',headers:H}).then(()=>refreshAll());
     }
     function refreshAll(){ loadHistory(true).then(loadStats); }
 
-    initMap(); refreshAll(); setInterval(()=>loadHistory(false),5000);
+    initMap(); refreshAll(); loadTuning(); setInterval(()=>loadHistory(false),5000);
 </script></body></html>

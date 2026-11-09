@@ -1,4 +1,4 @@
-import sqlite3, os, re, io, csv, math, time, threading, ipaddress, requests, hmac, hashlib, secrets, json
+import sqlite3, os, re, io, csv, math, time, tarfile, threading, ipaddress, requests, hmac, hashlib, secrets, json
 from collections import Counter
 from functools import wraps
 from flask import Flask, request, jsonify, send_from_directory, Response
@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, 'security.db')
+DB_PATH = os.environ.get('SQLITE_PATH') or os.path.join(BASE_DIR, 'security.db')
 app = Flask(__name__)
 KST = ZoneInfo('Asia/Seoul')
 
@@ -29,6 +29,10 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL', '')
 BREVO_API_KEY = os.environ.get('BREVO_API_KEY', '')
 OTP_EMAIL = os.environ.get('OTP_EMAIL', '')
+MAXMIND_ACCOUNT_ID = os.environ.get('MAXMIND_ACCOUNT_ID', '')
+MAXMIND_LICENSE_KEY = os.environ.get('MAXMIND_LICENSE_KEY', '')
+GEOLITE2_PATH = os.environ.get('GEOLITE2_PATH') or '/tmp/GeoLite2-City.mmdb'
+RETENTION_DAYS = int(os.environ.get('RETENTION_DAYS', '90') or 90)
 DATABASE_URL = os.environ.get('DATABASE_URL')
 if DATABASE_URL:
     import psycopg2
@@ -60,6 +64,8 @@ REASON_NAMES = {
 LANG_COUNTRY = {'ko': 'KR', 'ja': 'JP', 'zh': 'CN', 'vi': 'VN', 'th': 'TH'}
 SUSPICIOUS_LINE = 30
 REAUTH_LINE = 60
+ADMIN_FAIL_LIMIT = 5
+ADMIN_FAIL_MINUTES = 15
 REAUTH_MINUTES = 5
 REAUTH_MAX_TRY = 3
 FAIL_LIMIT = 6
@@ -208,12 +214,60 @@ def reasons_text(reasons):
 
 
 _geo_cache = {}
+_geolite = {'reader': None, 'status': '미설정'}
+
+
+def _open_geolite():
+    try:
+        import geoip2.database
+    except ImportError:
+        _geolite['status'] = 'geoip2 패키지 없음'
+        return
+    try:
+        if not os.path.exists(GEOLITE2_PATH):
+            if not (MAXMIND_ACCOUNT_ID and MAXMIND_LICENSE_KEY):
+                _geolite['status'] = 'MaxMind 키 없음'
+                return
+            _geolite['status'] = '다운로드 중'
+            url = 'https://download.maxmind.com/geoip/databases/GeoLite2-City/download?suffix=tar.gz'
+            r = requests.get(url, auth=(MAXMIND_ACCOUNT_ID, MAXMIND_LICENSE_KEY), timeout=120)
+            r.raise_for_status()
+            with tarfile.open(fileobj=io.BytesIO(r.content), mode='r:gz') as tar:
+                member = next(m for m in tar.getmembers() if m.name.endswith('.mmdb'))
+                with open(GEOLITE2_PATH + '.part', 'wb') as out:
+                    out.write(tar.extractfile(member).read())
+            os.replace(GEOLITE2_PATH + '.part', GEOLITE2_PATH)
+        _geolite['reader'] = geoip2.database.Reader(GEOLITE2_PATH)
+        _geolite['status'] = '사용 중'
+        print('[GeoLite2] 로컬 DB 사용')
+    except Exception as e:
+        _geolite['status'] = f'오류: {e}'
+        print(f'[GeoLite2 FAIL] {e}')
+
+threading.Thread(target=_open_geolite, daemon=True).start()
+
+
+def geolite_lookup(ip):
+    reader = _geolite['reader']
+    if reader is None:
+        return None
+    try:
+        r = reader.city(ip)
+    except Exception:
+        return None
+    if r.location.latitude is None:
+        return None
+    return {'country': r.country.name, 'countryCode': r.country.iso_code,
+            'regionName': r.subdivisions.most_specific.name, 'city': r.city.name,
+            'lat': r.location.latitude, 'lon': r.location.longitude, 'timezone': r.location.time_zone,
+            'proxy': False, 'hosting': False, 'source': 'GeoLite2'}
 
 def lookup_ip(ip):
     hit = _geo_cache.get(ip)
     if hit and time.time() - hit[0] < GEO_CACHE_SECONDS:
         return hit[1]
 
+    local = geolite_lookup(ip)
     geo = None
     try:
         url = f"http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,regionName,city,lat,lon,timezone,proxy,hosting"
@@ -240,6 +294,10 @@ def lookup_ip(ip):
         except Exception as e:
             print(f"[ipwho FAIL] {e}")
 
+    if local:
+        if geo:
+            local['proxy'], local['hosting'] = bool(geo.get('proxy')), bool(geo.get('hosting'))
+        geo = local
     if geo is not None:
         _geo_cache[ip] = (time.time(), geo)
     return geo
@@ -304,8 +362,8 @@ def check_webrtc(ip, rtc_ips):
     return None, None
 
 
-def fail_count(cur, keys):
-    since = fmt_time(now_kst() - timedelta(hours=FAIL_WINDOW_HOURS))
+def fail_count(cur, keys, hours=FAIL_WINDOW_HOURS):
+    since = fmt_time(now_kst() - timedelta(hours=hours))
     counts = [0]
     for k in keys:
         if k:
@@ -328,7 +386,23 @@ def add_fail(cur, keys):
             cur.execute(q("INSERT INTO reauth_fail (fail_key, ts) VALUES (?,?)"), (k, fmt_time(now_kst())))
 
 
-def calc_score(browser_tz, geo, device_state, travel=None, blocked=None, lang=None, leak=None, unusual=None):
+_setting_cache = {'t': 0, 'reauth_line': REAUTH_LINE}
+
+def reauth_line():
+    if time.time() - _setting_cache['t'] > 10:
+        try:
+            conn = get_conn(); cur = conn.cursor()
+            cur.execute(q("SELECT value FROM settings WHERE skey=?"), ('reauth_line',))
+            row = cur.fetchone()
+            conn.close()
+            _setting_cache['reauth_line'] = int(row[0]) if row else REAUTH_LINE
+        except Exception as e:
+            print(f'[설정 읽기 실패] {e}')
+        _setting_cache['t'] = time.time()
+    return _setting_cache['reauth_line']
+
+
+def calc_score(browser_tz, geo, device_state, travel=None, blocked=None, lang=None, leak=None, unusual=None, line=None):
     reasons = []
     if blocked:
         reasons.append(('BLOCKED', blocked))
@@ -357,7 +431,7 @@ def calc_score(browser_tz, geo, device_state, travel=None, blocked=None, lang=No
 
     reasons = [{'code': c, 'points': WEIGHTS[c], 'detail': d} for c, d in reasons]
     score = min(100, sum(r['points'] for r in reasons))
-    if score >= REAUTH_LINE:
+    if score >= (line or reauth_line()):
         status = 'INTRUSION'
     elif score >= SUSPICIOUS_LINE:
         status = 'SUSPICIOUS'
@@ -394,6 +468,7 @@ def init_db():
             cur.execute('ALTER TABLE reauth ADD COLUMN otp_hash TEXT')
     cur.execute('CREATE TABLE IF NOT EXISTS reauth_fail (fail_key TEXT, ts TEXT)')
     cur.execute('CREATE TABLE IF NOT EXISTS manual_block (block_key TEXT PRIMARY KEY, reason TEXT, ts TEXT)')
+    cur.execute('CREATE TABLE IF NOT EXISTS settings (skey TEXT PRIMARY KEY, value TEXT)')
     conn.commit(); conn.close()
 init_db()
 
@@ -418,7 +493,8 @@ def place_of(geo, vpn, use_vworld=True):
     lat, lng = geo.get('lat'), geo.get('lon')
     name = ' '.join(x for x in (geo.get('country'), geo.get('regionName'), geo.get('city')) if x)
     if vpn:
-        return lat, lng, f"{name} (VPN 의심: {geo.get('timezone')})"
+        short = ', '.join(x for x in (geo.get('city'), geo.get('country')) if x) or name
+        return lat, lng, f"{short} (VPN 의심: {geo.get('timezone')})"
     if use_vworld and geo.get('countryCode') == 'KR':
         addr = get_detail_address(lng, lat)
         if addr:
@@ -429,10 +505,24 @@ def place_of(geo, vpn, use_vworld=True):
 def admin_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
+        key = 'admin:' + client_ip()
+        hours = ADMIN_FAIL_MINUTES / 60
+        conn = get_conn(); cur = conn.cursor()
+        if fail_count(cur, [key], hours) >= ADMIN_FAIL_LIMIT:
+            conn.close()
+            return Response(f'로그인 실패가 반복되어 {ADMIN_FAIL_MINUTES}분 동안 잠겼습니다.', 429,
+                            {'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': str(ADMIN_FAIL_MINUTES * 60)})
         auth = request.authorization
         if not auth or not hmac.compare_digest((auth.password or '').encode(), ADMIN_PASSWORD.encode()):
+            if auth:
+                add_fail(cur, [key])
+                conn.commit()
+                if fail_count(cur, [key], hours) >= ADMIN_FAIL_LIMIT:
+                    notify(f"🔐 [Honey-Trap] 관리자 로그인 {ADMIN_FAIL_LIMIT}회 실패\nIP {client_ip()} · {ADMIN_FAIL_MINUTES}분 잠금")
+            conn.close()
             return Response('관리자 인증이 필요합니다.', 401,
                             {'WWW-Authenticate': 'Basic realm="honey-trap admin"', 'Content-Type': 'text/plain; charset=utf-8'})
+        conn.close()
         return f(*args, **kwargs)
     return wrapper
 
@@ -484,10 +574,32 @@ def issue_reauth(cur, log_id, fp, place, now, simulated=False):
             'digits': 6 if otp_hash else 4, 'channel': '·'.join(channels) if otp_hash else ''}
 
 
+_cleanup = {'t': 0}
+
+def cleanup_old(force=False):
+    if not force and time.time() - _cleanup['t'] < 3600:
+        return 0
+    _cleanup['t'] = time.time()
+    now = now_kst()
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute(q("DELETE FROM logs WHERE timestamp < ?"), (fmt_time(now - timedelta(days=RETENTION_DAYS)),))
+    removed = cur.rowcount
+    cur.execute(q("DELETE FROM reauth WHERE expires < ?"), ((now - timedelta(days=1)).isoformat(),))
+    cur.execute(q("DELETE FROM reauth_fail WHERE ts < ?"), (fmt_time(now - timedelta(days=2)),))
+    conn.commit(); conn.close()
+    if removed:
+        print(f'[보관 기간 만료] 기록 {removed}건 삭제')
+    return removed
+
+
 @app.route('/scan', methods=['POST'])
 def scan():
     data = request.get_json(silent=True) or {}
     ip = client_ip()
+    try:
+        cleanup_old()
+    except Exception as e:
+        print(f'[정리 실패] {e}')
     plat = clip(data.get('plat') or 'Mobile', 40)
     browser_tz = clip(data.get('timezone'), 64)
     lang = clip(data.get('lang'), 35)
@@ -714,7 +826,7 @@ def list_blocks(cur):
     for k, reason, ts in cur.fetchall():
         out.append({'key': k, 'type': 'manual', 'reason': reason, 'since': ts})
     since = fmt_time(now_kst() - timedelta(hours=FAIL_WINDOW_HOURS))
-    cur.execute(q("SELECT fail_key, COUNT(*), MAX(ts) FROM reauth_fail WHERE ts > ? GROUP BY fail_key"), (since,))
+    cur.execute(q("SELECT fail_key, COUNT(*), MAX(ts) FROM reauth_fail WHERE ts > ? AND fail_key NOT LIKE ? GROUP BY fail_key"), (since, 'admin:%'))
     manual = {b['key'] for b in out}
     for k, n, ts in cur.fetchall():
         if n >= FAIL_LIMIT and k not in manual:
@@ -836,6 +948,89 @@ def api_simulate():
     conn.commit(); conn.close()
     return jsonify({'id': log_id, 'scenario': sid, 'title': sc['title'], 'desc': sc['desc'], 'score': score, 'status': status,
                     'action': action, 'city': city, 'reasons': [{**r, 'name': REASON_NAMES.get(r['code'], r['code'])} for r in reasons]})
+
+
+US = {'country': 'United States', 'countryCode': 'US', 'regionName': 'California', 'city': 'Los Angeles', 'lat': 34.05, 'lon': -118.24,
+      'timezone': 'America/Los_Angeles', 'proxy': False, 'hosting': False}
+JP = {'country': 'Japan', 'countryCode': 'JP', 'regionName': 'Tokyo', 'city': 'Tokyo', 'lat': 35.68, 'lon': 139.69,
+      'timezone': 'Asia/Tokyo', 'proxy': False, 'hosting': False}
+KR_VPN = {**KR, 'regionName': 'Seoul', 'city': 'Seoul', 'proxy': True, 'hosting': True}
+BENCHMARK = [
+    ('normal', '등록 기기 · 집 와이파이', dict(tz='Asia/Seoul', lang='ko-KR', geo=KR, device='KNOWN')),
+    ('normal', '등록 기기 · LTE 접속', dict(tz='Asia/Seoul', lang='ko-KR', geo=KR, device='KNOWN')),
+    ('normal', '처음 방문한 국내 사용자', dict(tz='Asia/Seoul', lang='ko-KR', geo=KR, device='UNKNOWN')),
+    ('normal', '한국에 사는 외국인 (영어 브라우저)', dict(tz='Asia/Seoul', lang='en-US', geo=KR, device='UNKNOWN')),
+    ('normal', '일본 여행 중 (폰 시간대 자동 변경)', dict(tz='Asia/Tokyo', lang='ko-KR', geo=JP, device='KNOWN')),
+    ('normal', '미국 여행 중 (폰 시간대를 서울로 고정)', dict(tz='Asia/Seoul', lang='ko-KR', geo=US, device='KNOWN')),
+    ('normal', '등록 기기 · 새벽 접속', dict(tz='Asia/Seoul', lang='ko-KR', geo=KR, device='KNOWN', unusual=True)),
+    ('normal', '회사 VPN으로 재택근무 (등록 기기)', dict(tz='Asia/Seoul', lang='ko-KR', geo=KR_VPN, device='KNOWN')),
+    ('attack', '해외 VPN 우회', dict(tz='Asia/Seoul', lang='ko-KR', geo=SCENARIOS['vpn']['geo'], device='KNOWN')),
+    ('attack', '시간대까지 위조한 우회', dict(tz='America/Los_Angeles', lang='ko-KR', geo=US, device='KNOWN', travel=True)),
+    ('attack', 'WebRTC로 실제 IP 유출', dict(tz='Asia/Tokyo', lang='ja-JP', geo={**JP, 'hosting': True}, device='UNKNOWN', leak=True)),
+    ('attack', '인증 번호 대입 공격', dict(tz='Asia/Seoul', lang='ko-KR', geo=SCENARIOS['brute_force']['geo'], device='UNKNOWN', blocked=True)),
+    ('attack', '국내 VPN 서버 · 미등록 기기', dict(tz='Asia/Seoul', lang='ko-KR', geo=KR_VPN, device='UNKNOWN')),
+    ('attack', '국내 VPN 서버 · 탈취한 토큰', dict(tz='Asia/Seoul', lang='ko-KR', geo=KR_VPN, device='CHANGED')),
+    ('attack', '기기 토큰 탈취 (국내)', dict(tz='Asia/Seoul', lang='ko-KR', geo=KR, device='CHANGED')),
+    ('attack', '언어·국가 불일치 (시간대 위조)', dict(tz='America/New_York', lang='ko-KR', geo=SCENARIOS['lang_mismatch']['geo'], device='UNKNOWN')),
+]
+
+
+def benchmark_scores():
+    out = []
+    for label, name, c in BENCHMARK:
+        travel = travel_text(distance_km(35.82, 127.14, c['geo']['lat'], c['geo']['lon']), 5) if c.get('travel') else None
+        leak = 'WebRTC로 확인된 실제 IP (South Korea)' if c.get('leak') else None
+        unusual = '평소 접속 시간대가 아닌 3시에 접속' if c.get('unusual') else None
+        blocked = '인증 실패 반복으로 자동 차단' if c.get('blocked') else None
+        score, _, reasons = calc_score(c['tz'], c['geo'], c['device'], travel, blocked, check_lang(c['lang'], c['geo']), leak, unusual, line=999)
+        out.append({'label': label, 'name': name, 'score': score, 'reasons': [REASON_NAMES.get(r['code'], r['code']) for r in reasons]})
+    return out
+
+
+@app.route('/api/tuning')
+@admin_required
+def api_tuning():
+    cases = benchmark_scores()
+    attacks = [c for c in cases if c['label'] == 'attack']
+    normals = [c for c in cases if c['label'] == 'normal']
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT score FROM logs WHERE simulated=0 OR simulated IS NULL")
+    real = [r[0] or 0 for r in cur.fetchall()]
+    conn.close()
+    rows = []
+    for t in range(40, 95, 5):
+        tp = sum(1 for c in attacks if c['score'] >= t)
+        fp = sum(1 for c in normals if c['score'] >= t)
+        rows.append({'line': t, 'detected': tp, 'attacks': len(attacks), 'false_alarms': fp, 'normals': len(normals),
+                     'real_reauth': sum(1 for x in real if x >= t), 'real_total': len(real)})
+    return jsonify({'current': reauth_line(), 'rows': rows, 'cases': cases})
+
+
+@app.route('/api/settings', methods=['GET'])
+@admin_required
+def api_settings_get():
+    return jsonify({'reauth_line': reauth_line(), 'suspicious_line': SUSPICIOUS_LINE, 'retention_days': RETENTION_DAYS,
+                    'geolite': _geolite['status'], 'otp': otp_channels()})
+
+
+@app.route('/api/settings', methods=['POST'])
+@admin_required
+@same_origin_required
+def api_settings_set():
+    data = request.get_json(silent=True) or {}
+    try:
+        line = int(data.get('reauth_line'))
+    except (TypeError, ValueError):
+        return jsonify({'error': '숫자를 입력하세요.'}), 400
+    if not 40 <= line <= 95:
+        return jsonify({'error': '재인증 기준은 40~95점 사이여야 합니다.'}), 400
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute(q("DELETE FROM settings WHERE skey=?"), ('reauth_line',))
+    cur.execute(q("INSERT INTO settings (skey, value) VALUES (?,?)"), ('reauth_line', str(line)))
+    conn.commit(); conn.close()
+    _setting_cache['t'] = 0
+    notify(f"⚙️ [Honey-Trap] 재인증 기준이 {line}점으로 변경됨")
+    return jsonify({'ok': True, 'reauth_line': reauth_line()})
 
 
 @app.route('/api/clear', methods=['POST'])

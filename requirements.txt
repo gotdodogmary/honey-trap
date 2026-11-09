@@ -5,3 +5,4 @@ gunicorn
 eventlet
 psycopg2-binary
 tzdata
+geoip2
