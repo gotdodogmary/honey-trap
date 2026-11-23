@@ -370,15 +370,21 @@ def check_lang(lang, geo):
     return f"브라우저 언어 {lang} / IP 국가 {geo['countryCode']}"
 
 
-def check_webrtc(ip, rtc_ips):
+def check_webrtc(ip, rtc_ips, geo=None):
     try:
         conn_ip = ipaddress.ip_address(ip)
     except ValueError:
         return None, None
     for v in rtc_ips:
         a = ipaddress.ip_address(v)
-        if a.version == conn_ip.version and a != conn_ip:
-            return v, lookup_ip(v)
+        if a.version != conn_ip.version or a == conn_ip:
+            continue
+        g = lookup_ip(v)
+        if g and (g.get('proxy') or g.get('hosting')):
+            continue
+        if g and geo and g.get('countryCode') and g.get('countryCode') == geo.get('countryCode'):
+            continue
+        return v, g
     return None, None
 
 
@@ -664,7 +670,7 @@ def scan():
     geo = lookup_ip(ip)
     print(f"[GeoIP] {ip} 브라우저={browser_tz} 언어={lang} WebRTC={rtc_ips} IP={geo}")
 
-    leak_ip, leak_geo = check_webrtc(ip, rtc_ips)
+    leak_ip, leak_geo = check_webrtc(ip, rtc_ips, geo)
     leak = None
     if leak_ip:
         where = ' '.join(x for x in ((leak_geo or {}).get('country'), (leak_geo or {}).get('city')) if x) or '위치 미상'

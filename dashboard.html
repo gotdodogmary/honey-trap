@@ -180,8 +180,11 @@
         pathSource.addFeature(new ol.Feature({geometry:new ol.geom.LineString([a,end]),danger:statusOf(l)!=='SECURE'}));
     }
     function addMarker(lng,lat,title,status,kind){try{vectorSource.addFeature(new ol.Feature({geometry:new ol.geom.Point(ol.proj.fromLonLat([+lng,+lat])),name:title,status:status,kind:kind||'pin'}));}catch(e){}}
+    function hasReal(l){
+        return l.real_lat!=null&&l.real_lng!=null&&l.lat!=null&&km({lat:+l.lat,lng:+l.lng},{lat:+l.real_lat,lng:+l.real_lng})>=MOVE_KM;
+    }
     function addReal(l){
-        if(l.real_lat==null||l.real_lng==null) return;
+        if(!hasReal(l)) return;
         addMarker(l.real_lng,l.real_lat,realLabel(l),statusOf(l),'real');
         const a=ol.proj.fromLonLat([+l.lng,+l.lat]), b=ol.proj.fromLonLat([+l.real_lng,+l.real_lat]);
         if(Math.abs(a[0]-b[0])+Math.abs(a[1]-b[1])<1) return;
@@ -202,7 +205,7 @@
         return `<tr id="r${esc(l.id)}">
       <td>${esc(l.timestamp)}${sim?'<span class="sim">시뮬레이션</span>':''}</td>
       <td>${esc(l.ip)}${l.lang?`<span class="sub">${esc(l.lang)}</span>`:''}</td>
-      <td>📍 ${esc(l.city)}<span class="sub">${esc(l.lat)}, ${esc(l.lng)}</span>${l.real_city?`<span class="sub" style="color:#d2b8ff">${l.real_src==='webrtc'?'🎯 추정 실제 위치':'↩ 직전 정상 위치'}: ${esc(l.real_city)}</span>`:''}</td>
+      <td>📍 ${esc(l.city)}<span class="sub">${esc(l.lat)}, ${esc(l.lng)}</span>${hasReal(l)?`<span class="sub" style="color:#d2b8ff">${l.real_src==='webrtc'?'🎯 추정 실제 위치':'↩ 직전 정상 위치'}: ${esc(l.real_city)}</span>`:''}</td>
       <td>${iconFor(l.platform)}</td>
       <td><span class="score">${esc(l.score)}</span>${reasons}</td>
       <td><span class="badge b-${st}">${st==='INTRUSION'?'⚠ ':''}${st}</span>${authTag(l.verified)}</td>

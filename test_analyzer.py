@@ -31,6 +31,8 @@ GEO = {
                        'lat': 37.56, 'lon': 126.97, 'timezone': 'Asia/Seoul', 'proxy': False, 'hosting': False},
     '149.88.98.165': {'country': 'Canada', 'countryCode': 'CA', 'regionName': 'Ontario', 'city': 'Toronto',
                       'lat': 43.70, 'lon': -79.40, 'timezone': 'America/Toronto', 'proxy': True, 'hosting': True},
+    '149.88.98.170': {'country': 'Canada', 'countryCode': 'CA', 'regionName': 'Ontario', 'city': 'Toronto',
+                      'lat': 43.70, 'lon': -79.40, 'timezone': 'America/Toronto', 'proxy': False, 'hosting': True},
     '8.8.4.4': {'country': 'United States', 'countryCode': 'US', 'regionName': 'California', 'city': 'Los Angeles',
                 'lat': 34.05, 'lon': -118.24, 'timezone': 'America/Los_Angeles', 'proxy': False, 'hosting': False},
 }
@@ -178,6 +180,15 @@ class FlowTest(Base):
         self.assertEqual((log['real_src'], log['real_city']), ('webrtc', 'Jeonju, South Korea'))
         self.assertAlmostEqual(log['real_lat'], 35.82)
         self.assertTrue(any('추정 실제 위치: Jeonju' in m.get('text', '') for m in SENT))
+
+    def test_other_vpn_server_ip_is_not_a_leak(self):
+        self.assertIsNone(a.check_webrtc('149.88.98.165', ['149.88.98.170'], GEO['149.88.98.165'])[0])
+        token = self.enroll()
+        self.scan('149.88.98.165', device_token=token, rtc=['149.88.98.170'])
+        log = self.last_log()
+        self.assertNotIn('WEBRTC_LEAK', [r['code'] for r in log['reasons']])
+        self.assertEqual(log['real_src'], 'last')
+        self.assertIn('Jeonju', log['real_city'])
 
     def test_registered_device_vpn_gives_last_city(self):
         token = self.enroll()
