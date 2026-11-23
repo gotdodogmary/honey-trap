@@ -48,7 +48,7 @@
             const box=document.getElementById('res-'+id);
             const reasons=j.reasons.length?j.reasons.map(r=>`<div class="reason"><b>+${r.points}</b><span>${esc(r.name)}${r.detail&&r.detail!==r.name?' · '+esc(r.detail):''}</span></div>`).join(''):'<div class="none">감점 항목 없음</div>';
             box.innerHTML=`<div class="row"><span class="score">${j.score}</span><div class="bar"><i style="width:${j.score}%;background:${COLOR[j.status]}"></i><span class="line" style="left:${LINE}%"></span></div><span class="badge b-${j.status}">${j.status}</span></div>
-                ${reasons}<div class="action">${ACTION[j.action]}</div>`;
+                ${reasons}${j.real_city?`<div class="action" style="color:#d2b8ff">${j.real_src==='webrtc'?'🎯 추정 실제 위치':'↩ 직전 정상 위치'}: ${esc(j.real_city)}</div>`:''}<div class="action">${ACTION[j.action]}</div>`;
             box.classList.add('show');
         });
     }

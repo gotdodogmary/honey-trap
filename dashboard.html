@@ -83,7 +83,7 @@
 </div>
 
 <div id="mapwrap"><div id="map"></div>
-    <div class="legend"><div><span class="dot" style="background:#2ea043"></span>SECURE</div><div><span class="dot" style="background:#e3b341"></span>SUSPICIOUS</div><div><span class="dot" style="background:#f85149"></span>INTRUSION</div><div><span style="color:#f85149">━▶</span> 같은 기기 위치 급변</div></div>
+    <div class="legend"><div><span class="dot" style="background:#2ea043"></span>SECURE</div><div><span class="dot" style="background:#e3b341"></span>SUSPICIOUS</div><div><span class="dot" style="background:#f85149"></span>INTRUSION</div><div><span style="color:#f85149">━▶</span> 같은 기기 위치 급변</div><div><span style="color:#a371f7">◯┈▶</span> 추정 실제 위치</div></div>
 </div>
 
 <div class="panels">
@@ -129,10 +129,24 @@
 
     function initMap(){
         vectorSource=new ol.source.Vector();
-        const vl=new ol.layer.Vector({source:vectorSource,style:f=>new ol.style.Style({image:new ol.style.Circle({radius:8,fill:new ol.style.Fill({color:COLOR[f.get('status')]||COLOR.SECURE}),stroke:new ol.style.Stroke({color:'#fff',width:2})}),text:new ol.style.Text({text:pinLabel(f.get('name')),offsetY:-14,font:'bold 11px sans-serif',fill:new ol.style.Fill({color:'#fff'}),stroke:new ol.style.Stroke({color:'#000',width:3})})})});
+        const vl=new ol.layer.Vector({source:vectorSource,style:pinStyle});
         pathSource=new ol.source.Vector();
         const pl=new ol.layer.Vector({source:pathSource,style:pathStyle});
         map=new ol.Map({target:'map',layers:[new ol.layer.Tile({source:new ol.source.OSM()}),pl,vl],view:new ol.View({center:ol.proj.fromLonLat([127.148,35.824]),zoom:7})});
+    }
+    const REAL='#a371f7';
+    function pinStyle(f){
+        const real=f.get('kind')==='real';
+        return new ol.style.Style({
+            image:real
+                ?new ol.style.Circle({radius:9,fill:new ol.style.Fill({color:'rgba(163,113,247,.25)'}),stroke:new ol.style.Stroke({color:REAL,width:3})})
+                :new ol.style.Circle({radius:8,fill:new ol.style.Fill({color:COLOR[f.get('status')]||COLOR.SECURE}),stroke:new ol.style.Stroke({color:'#fff',width:2})}),
+            text:new ol.style.Text({text:real?f.get('name'):pinLabel(f.get('name')),offsetY:real?18:-14,font:'bold 11px sans-serif',fill:new ol.style.Fill({color:real?'#d2b8ff':'#fff'}),stroke:new ol.style.Stroke({color:'#000',width:3})})
+        });
+    }
+    function realLabel(l){
+        const name=String(l.real_city||'');
+        return (l.real_src==='webrtc'?'추정 실제 위치: ':'직전 정상 위치: ')+(name.length>22?name.slice(0,21)+'…':name);
     }
     function pinLabel(name){
         name=name||'';
@@ -143,9 +157,11 @@
     }
     function pathStyle(f){
         const c=f.getGeometry().getCoordinates(), a=c[0], b=c[1];
-        const col=f.get('danger')?'#f85149':'#8b949e';
+        const real=f.get('kind')==='real';
+        const col=real?REAL:(f.get('danger')?'#f85149':'#8b949e');
+        const dash=real?[2,7]:(f.get('danger')?undefined:[6,6]);
         return [
-            new ol.style.Style({stroke:new ol.style.Stroke({color:col,width:3,lineDash:f.get('danger')?undefined:[6,6]})}),
+            new ol.style.Style({stroke:new ol.style.Stroke({color:col,width:3,lineDash:dash})}),
             new ol.style.Style({geometry:new ol.geom.Point(b),image:new ol.style.RegularShape({points:3,radius:9,fill:new ol.style.Fill({color:col}),rotation:Math.PI/2-Math.atan2(b[1]-a[1],b[0]-a[0])})})
         ];
     }
@@ -163,7 +179,15 @@
         const end=[a[0]+(b[0]-a[0])*0.95,a[1]+(b[1]-a[1])*0.95];
         pathSource.addFeature(new ol.Feature({geometry:new ol.geom.LineString([a,end]),danger:statusOf(l)!=='SECURE'}));
     }
-    function addMarker(lng,lat,title,status){try{vectorSource.addFeature(new ol.Feature({geometry:new ol.geom.Point(ol.proj.fromLonLat([+lng,+lat])),name:title,status:status}));}catch(e){}}
+    function addMarker(lng,lat,title,status,kind){try{vectorSource.addFeature(new ol.Feature({geometry:new ol.geom.Point(ol.proj.fromLonLat([+lng,+lat])),name:title,status:status,kind:kind||'pin'}));}catch(e){}}
+    function addReal(l){
+        if(l.real_lat==null||l.real_lng==null) return;
+        addMarker(l.real_lng,l.real_lat,realLabel(l),statusOf(l),'real');
+        const a=ol.proj.fromLonLat([+l.lng,+l.lat]), b=ol.proj.fromLonLat([+l.real_lng,+l.real_lat]);
+        if(Math.abs(a[0]-b[0])+Math.abs(a[1]-b[1])<1) return;
+        const end=[a[0]+(b[0]-a[0])*0.95,a[1]+(b[1]-a[1])*0.95];
+        pathSource.addFeature(new ol.Feature({geometry:new ol.geom.LineString([a,end]),kind:'real'}));
+    }
     function iconFor(p){p=(p||'').toLowerCase();if(p.includes('simulation'))return '🧪 시뮬레이션';if(p.includes('mac'))return '🍎 Mac';if(p.includes('iphone'))return '📱 iPhone';if(p.includes('win'))return '💻 Windows';return '📱 '+esc(p);}
     function authTag(v){
         if(v==1) return '<span class="sub" style="color:#3fb950">✓ 재인증 통과</span>';
@@ -178,7 +202,7 @@
         return `<tr id="r${esc(l.id)}">
       <td>${esc(l.timestamp)}${sim?'<span class="sim">시뮬레이션</span>':''}</td>
       <td>${esc(l.ip)}${l.lang?`<span class="sub">${esc(l.lang)}</span>`:''}</td>
-      <td>📍 ${esc(l.city)}<span class="sub">${esc(l.lat)}, ${esc(l.lng)}</span></td>
+      <td>📍 ${esc(l.city)}<span class="sub">${esc(l.lat)}, ${esc(l.lng)}</span>${l.real_city?`<span class="sub" style="color:#d2b8ff">${l.real_src==='webrtc'?'🎯 추정 실제 위치':'↩ 직전 정상 위치'}: ${esc(l.real_city)}</span>`:''}</td>
       <td>${iconFor(l.platform)}</td>
       <td><span class="score">${esc(l.score)}</span>${reasons}</td>
       <td><span class="badge b-${st}">${st==='INTRUSION'?'⚠ ':''}${st}</span>${authTag(l.verified)}</td>
@@ -189,6 +213,7 @@
         if(l.lat==null) return;
         addMarker(l.lng,l.lat,l.city,statusOf(l));
         addPath(l);
+        addReal(l);
         document.getElementById('tbody').insertAdjacentHTML('beforeend',rowHtml(l));
     }
 

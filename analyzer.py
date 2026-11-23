@@ -316,15 +316,35 @@ def travel_text(km, minutes):
         return None
     return f"직전 접속 위치에서 {km:,.0f}km를 {hours * 60:,.0f}분 만에 이동 (시속 {speed:,.0f}km)"
 
-def check_travel(cur, device, geo, now):
-    if not device or not geo or geo.get('lat') is None:
+def last_secure(cur, device):
+    if not device:
         return None
-    cur.execute(q(f"SELECT lat, lng, timestamp FROM logs WHERE device=? AND city<>? AND status='SECURE' AND simulated=0 ORDER BY {id_col()} DESC LIMIT 1"), (device, UNKNOWN_PLACE))
+    cur.execute(q(f"SELECT lat, lng, timestamp, city FROM logs WHERE device=? AND city<>? AND status='SECURE' AND simulated=0 ORDER BY {id_col()} DESC LIMIT 1"), (device, UNKNOWN_PLACE))
     row = cur.fetchone()
     if not row or row[0] is None:
         return None
+    return row
+
+
+def check_travel(cur, device, geo, now, last=None):
+    if not geo or geo.get('lat') is None:
+        return None
+    row = last or last_secure(cur, device)
+    if not row:
+        return None
     km = distance_km(float(row[0]), float(row[1]), float(geo['lat']), float(geo['lon']))
     return travel_text(km, (now - parse_time(row[2])).total_seconds() / 60)
+
+
+def real_place(leak_geo, last, now):
+    if leak_geo and leak_geo.get('lat') is not None:
+        name = ', '.join(x for x in (leak_geo.get('city'), leak_geo.get('country')) if x) or '위치 미상'
+        return {'real_city': name, 'real_lat': leak_geo['lat'], 'real_lng': leak_geo['lon'], 'real_src': 'webrtc'}, f"추정 실제 위치: {name} (WebRTC)"
+    if last:
+        minutes = int((now - parse_time(last[2])).total_seconds() // 60)
+        ago = f"{minutes}분 전" if minutes < 60 else (f"{minutes // 60}시간 전" if minutes < 1440 else f"{minutes // 1440}일 전")
+        return {'real_city': last[3], 'real_lat': float(last[0]), 'real_lng': float(last[1]), 'real_src': 'last'}, f"직전 정상 위치: {last[3]} ({ago})"
+    return {}, ''
 
 
 def check_hour(cur, device, now):
@@ -442,7 +462,8 @@ def calc_score(browser_tz, geo, device_state, travel=None, blocked=None, lang=No
 
 def init_db():
     cols = (('status', 'TEXT'), ('reasons', 'TEXT'), ('verified', 'INTEGER DEFAULT 0'), ('device', 'TEXT'),
-            ('country', 'TEXT'), ('lang', 'TEXT'), ('simulated', 'INTEGER DEFAULT 0'))
+            ('country', 'TEXT'), ('lang', 'TEXT'), ('simulated', 'INTEGER DEFAULT 0'),
+            ('real_city', 'TEXT'), ('real_lat', 'DOUBLE PRECISION'), ('real_lng', 'DOUBLE PRECISION'), ('real_src', 'TEXT'))
     conn = get_conn(); cur = conn.cursor()
     if DATABASE_URL:
         cur.execute('''CREATE TABLE IF NOT EXISTS logs
@@ -548,11 +569,12 @@ def security_headers(resp):
 
 
 def save_log(cur, row):
-    sql = ("INSERT INTO logs (ip,ua,res,tz,lat,lng,city,score,platform,timestamp,status,reasons,verified,device,country,lang,simulated) "
-           "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    sql = ("INSERT INTO logs (ip,ua,res,tz,lat,lng,city,score,platform,timestamp,status,reasons,verified,device,country,lang,simulated,"
+           "real_city,real_lat,real_lng,real_src) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     values = (row['ip'], row.get('ua', ''), row.get('res', ''), row['tz'], row['lat'], row['lng'], row['city'], row['score'],
               row['platform'], row['timestamp'], row['status'], json.dumps(row['reasons'], ensure_ascii=False),
-              row.get('verified', 0), row.get('device', ''), row.get('country'), row.get('lang', ''), row.get('simulated', 0))
+              row.get('verified', 0), row.get('device', ''), row.get('country'), row.get('lang', ''), row.get('simulated', 0),
+              row.get('real_city'), row.get('real_lat'), row.get('real_lng'), row.get('real_src'))
     if DATABASE_URL:
         cur.execute(q(sql) + ' RETURNING id', values)
         return cur.fetchone()[0]
@@ -653,16 +675,18 @@ def scan():
     blocked = manual_blocked(cur, keys)
     if not blocked and fail_count(cur, keys) >= FAIL_LIMIT:
         blocked = f'인증 실패 반복으로 {FAIL_WINDOW_HOURS}시간 자동 차단된 IP·기기'
-    travel = check_travel(cur, device, geo, now)
+    last = last_secure(cur, device)
+    travel = check_travel(cur, device, geo, now, last)
     unusual = check_hour(cur, device, now)
     score, status, reasons = calc_score(browser_tz, geo, device_state, travel, blocked, check_lang(lang, geo), leak, unusual)
     vpn = any(r['code'] in ('TZ_MISMATCH', 'PROXY_IP', 'HOSTING_IP', 'WEBRTC_LEAK') for r in reasons)
     lat, lng, city = place_of(geo, vpn)
+    real, real_text = real_place(leak_geo, last, now) if (vpn or travel) else ({}, '')
 
     log_id = save_log(cur, {'ip': ip, 'ua': clip(data.get('ua'), 300), 'res': clip(data.get('res'), 20), 'tz': browser_tz,
                             'lat': lat, 'lng': lng, 'city': city, 'score': score, 'platform': plat, 'timestamp': fmt_time(now),
                             'status': status, 'reasons': reasons, 'verified': -1 if blocked else 0, 'device': device,
-                            'country': (geo or {}).get('countryCode'), 'lang': lang})
+                            'country': (geo or {}).get('countryCode'), 'lang': lang, **real})
 
     resp = {"status": "success", "device_token": new_token, "action": "ALLOW"}
     if blocked:
@@ -672,7 +696,7 @@ def scan():
 
     conn.commit(); conn.close()
     if status == 'INTRUSION':
-        notify(f"🚨 [Honey-Trap] {'차단된 접속' if blocked else '침입 의심'} {score}점\nIP {ip} · {city}\n{reasons_text(reasons)}")
+        notify(f"🚨 [Honey-Trap] {'차단된 접속' if blocked else '침입 의심'} {score}점\nIP {ip} · {city}" + (f"\n{real_text}" if real_text else '') + f"\n{reasons_text(reasons)}")
     print(f"[저장] {ip} -> {city} {score}점 {status} {[r['code'] for r in reasons]}")
     return jsonify(resp)
 
@@ -809,9 +833,12 @@ def api_export():
     conn.close()
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(['번호', '시간', 'IP', '위치', '국가', '플랫폼', '브라우저 시간대', '언어', '점수', '판정', '재인증', '기기', '시뮬레이션', '감점 사유'])
+    w.writerow(['번호', '시간', 'IP', '위치', '추정 실제 위치', '국가', '플랫폼', '브라우저 시간대', '언어', '점수', '판정', '재인증', '기기', '시뮬레이션', '감점 사유'])
     for r in reversed(rows):
-        w.writerow([r['id'], r.get('timestamp'), r.get('ip'), r.get('city'), r.get('country') or '', r.get('platform'),
+        real = r.get('real_city') or ''
+        if real:
+            real += ' (WebRTC)' if r.get('real_src') == 'webrtc' else ' (직전 정상 위치)'
+        w.writerow([r['id'], r.get('timestamp'), r.get('ip'), r.get('city'), real, r.get('country') or '', r.get('platform'),
                     r.get('tz'), r.get('lang') or '', r.get('score'), r.get('status') or '',
                     {1: '통과', -1: '차단'}.get(r.get('verified'), ''), r.get('device') or '', 'Y' if r.get('simulated') else '',
                     ' / '.join(f"+{x['points']} {REASON_NAMES.get(x['code'], x['code'])}" for x in r['reasons'])])
@@ -889,13 +916,14 @@ SCENARIOS = {
                     'timezone': 'America/Toronto', 'proxy': True, 'hosting': True}},
     'tz_spoof': {'title': '시간대까지 위조한 우회', 'desc': '기기 시간대를 미국으로 바꾸고 일반 회선으로 접속, 5분 전엔 전주에 있었음',
                  'ip': '198.51.100.30', 'tz': 'America/Los_Angeles', 'lang': 'ko-KR', 'device': 'KNOWN', 'travel': (35.82, 127.14, 5),
+                 'real': ('South Korea Jeonbuk Jeonju', 35.82, 127.14, 'last'),
                  'geo': {'country': 'United States', 'countryCode': 'US', 'regionName': 'California', 'city': 'Los Angeles',
                          'lat': 34.05, 'lon': -118.24, 'timezone': 'America/Los_Angeles', 'proxy': False, 'hosting': False}},
     'token_theft': {'title': '기기 토큰 탈취', 'desc': '훔친 등록 토큰을 다른 기기의 브라우저에 넣고 국내에서 접속',
                     'ip': '203.0.113.40', 'geo': KR, 'tz': 'Asia/Seoul', 'lang': 'ko-KR', 'device': 'CHANGED'},
     'webrtc_leak': {'title': 'WebRTC로 실제 IP 유출', 'desc': '일본 VPN + 시간대 위조, 하지만 WebRTC가 한국 IP를 드러냄',
                     'ip': '198.51.100.50', 'tz': 'Asia/Tokyo', 'lang': 'ja-JP', 'device': 'UNKNOWN',
-                    'leak': ('203.0.113.55', 'South Korea Jeonju'),
+                    'leak': ('203.0.113.55', 'South Korea Jeonju'), 'real': ('Jeonju, South Korea', 35.82, 127.14, 'webrtc'),
                     'geo': {'country': 'Japan', 'countryCode': 'JP', 'regionName': 'Tokyo', 'city': 'Tokyo', 'lat': 35.68, 'lon': 139.69,
                             'timezone': 'Asia/Tokyo', 'proxy': False, 'hosting': True}},
     'lang_mismatch': {'title': '언어·국가 불일치', 'desc': '한국어 브라우저로 미국 일반 회선에서 접속 (시간대도 미국으로 위조)',
@@ -938,16 +966,17 @@ def api_simulate():
     score, status, reasons = calc_score(sc['tz'], geo, sc['device'], travel, blocked, check_lang(sc['lang'], geo), leak, unusual)
     vpn = any(r['code'] in ('TZ_MISMATCH', 'PROXY_IP', 'HOSTING_IP', 'WEBRTC_LEAK') for r in reasons)
     lat, lng, city = place_of(geo, vpn, use_vworld=False)
+    real = dict(zip(('real_city', 'real_lat', 'real_lng', 'real_src'), sc['real'])) if sc.get('real') else {}
 
     conn = get_conn(); cur = conn.cursor()
     log_id = save_log(cur, {'ip': sc['ip'], 'tz': sc['tz'], 'lat': lat, 'lng': lng, 'city': '[시뮬레이션] ' + city, 'score': score,
                             'platform': 'Simulation', 'timestamp': fmt_time(now), 'status': status, 'reasons': reasons,
                             'verified': -1 if blocked else 0, 'device': 'sim-' + sid, 'country': geo.get('countryCode'),
-                            'lang': sc['lang'], 'simulated': 1})
+                            'lang': sc['lang'], 'simulated': 1, **real})
     action = 'BLOCKED' if blocked else ('REAUTH' if status == 'INTRUSION' else 'ALLOW')
     conn.commit(); conn.close()
     return jsonify({'id': log_id, 'scenario': sid, 'title': sc['title'], 'desc': sc['desc'], 'score': score, 'status': status,
-                    'action': action, 'city': city, 'reasons': [{**r, 'name': REASON_NAMES.get(r['code'], r['code'])} for r in reasons]})
+                    'action': action, 'city': city, 'real_city': real.get('real_city'), 'real_src': real.get('real_src'), 'reasons': [{**r, 'name': REASON_NAMES.get(r['code'], r['code'])} for r in reasons]})
 
 
 US = {'country': 'United States', 'countryCode': 'US', 'regionName': 'California', 'city': 'Los Angeles', 'lat': 34.05, 'lon': -118.24,
