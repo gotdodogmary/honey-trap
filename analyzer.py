@@ -527,18 +527,54 @@ def init_db():
 init_db()
 
 
-def get_detail_address(lng, lat):
+_addr_cache = {}
+
+
+def vworld_address(lng, lat):
     if not VWORLD_KEY:
         return None
     try:
         url = f"https://api.vworld.kr/req/address?service=address&request=getAddress&version=2.0&crs=epsg:4326&point={lng},{lat}&format=json&type=both&key={VWORLD_KEY}"
         r = requests.get(url, timeout=4).json()
-        result = r.get('response',{}).get('result',[])
+        result = r.get('response', {}).get('result', [])
         if result and result[0].get('text'):
             return result[0]['text']
+        print(f"[VWorld FAIL] {r.get('response', {}).get('status')}")
     except Exception as e:
         print(f"[VWorld FAIL] {e}")
     return None
+
+
+def osm_address(lng, lat):
+    try:
+        r = requests.get('https://nominatim.openstreetmap.org/reverse',
+                         params={'format': 'jsonv2', 'lat': lat, 'lon': lng, 'zoom': 16, 'accept-language': 'ko'},
+                         headers={'User-Agent': 'honey-trap-canvas/2.0 (+https://honey-trap.onrender.com)'}, timeout=5).json()
+        a = r.get('address') or {}
+        parts = []
+        for keys in (('province', 'state'), ('city', 'county', 'town'), ('borough', 'city_district', 'district'),
+                     ('suburb', 'quarter', 'neighbourhood', 'village', 'hamlet')):
+            v = next((a[k] for k in keys if a.get(k)), None)
+            if v and v not in parts:
+                parts.append(v)
+        if parts:
+            return ' '.join(parts)
+        return r.get('display_name')
+    except Exception as e:
+        print(f"[OSM FAIL] {e}")
+    return None
+
+
+def get_detail_address(lng, lat):
+    key = (round(float(lat), 3), round(float(lng), 3))
+    if key in _addr_cache:
+        return _addr_cache[key]
+    addr = vworld_address(lng, lat) or osm_address(lng, lat)
+    if addr:
+        if len(_addr_cache) > 2000:
+            _addr_cache.clear()
+        _addr_cache[key] = addr
+    return addr
 
 
 def place_of(geo, vpn, use_vworld=True):

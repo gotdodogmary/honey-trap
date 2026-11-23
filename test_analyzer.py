@@ -42,6 +42,7 @@ REAL_LOOKUP = a.lookup_ip
 a.lookup_ip = lambda ip: GEO.get(ip)
 SENT = []
 a._send = lambda url, **kw: SENT.append(kw.get('json') or {})
+REAL_ADDRESS = a.get_detail_address
 a.get_detail_address = lambda lng, lat: None
 
 ADMIN = {'Authorization': 'Basic ' + base64.b64encode(b'admin:test-admin').decode()}
@@ -269,6 +270,27 @@ class GpsTest(Base):
         for v in (None, 'x', {'lat': 'a', 'lng': 1}, {'lat': 200, 'lng': 1}, {'lat': 0, 'lng': 0}, {'lat': 35, 'lng': 127, 'acc': 9999}):
             self.assertIsNone(a.read_gps(v))
         self.assertEqual(a.read_gps(self.GPS), (35.8467, 127.1294, 20))
+
+
+class AddressTest(unittest.TestCase):
+    def test_osm_korean_address_without_vworld_key(self):
+        class R:
+            def json(self):
+                return {'address': {'province': '전북특별자치도', 'city': '전주시', 'borough': '완산구', 'quarter': '효자동',
+                                    'country': '대한민국'}, 'display_name': '긴 주소'}
+        calls = []
+        old_get, old_key = a.requests.get, a.VWORLD_KEY
+        a.requests.get = lambda url, **k: calls.append(url) or R()
+        a.VWORLD_KEY = ''
+        try:
+            a._addr_cache.clear()
+            self.assertEqual(REAL_ADDRESS(127.0573, 35.8407), '전북특별자치도 전주시 완산구 효자동')
+            REAL_ADDRESS(127.0574, 35.8406)
+            self.assertEqual(len(calls), 1)
+            self.assertIn('nominatim', calls[0])
+        finally:
+            a.requests.get, a.VWORLD_KEY = old_get, old_key
+            a._addr_cache.clear()
 
 
 class LookupTest(unittest.TestCase):
