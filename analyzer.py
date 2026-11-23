@@ -340,6 +340,23 @@ def check_travel(cur, device, geo, now, last=None):
     return travel_text(km, (now - parse_time(row[2])).total_seconds() / 60)
 
 
+def read_gps(v):
+    if not isinstance(v, dict):
+        return None
+    try:
+        lat, lng, acc = float(v.get('lat')), float(v.get('lng')), float(v.get('acc') or 0)
+    except (TypeError, ValueError):
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180) or (lat == 0 and lng == 0) or not 0 <= acc <= 5000:
+        return None
+    return round(lat, 5), round(lng, 5), int(acc)
+
+
+def gps_name(gps):
+    addr = get_detail_address(gps[1], gps[0])
+    return f"{addr} (GPS)" if addr else f"GPS {gps[0]:.3f}, {gps[1]:.3f}"
+
+
 def real_place(leak_geo, last, now):
     if leak_geo and leak_geo.get('lat') is not None:
         name = ', '.join(x for x in (leak_geo.get('city'), leak_geo.get('country')) if x) or '위치 미상'
@@ -690,8 +707,16 @@ def scan():
     unusual = check_hour(cur, device, now)
     score, status, reasons = calc_score(browser_tz, geo, device_state, travel, blocked, check_lang(lang, geo), leak, unusual)
     vpn = any(r['code'] in ('TZ_MISMATCH', 'PROXY_IP', 'HOSTING_IP', 'WEBRTC_LEAK') for r in reasons)
-    lat, lng, city = place_of(geo, vpn)
-    real, real_text = real_place(leak_geo, last, now) if (vpn or travel) else ({}, '')
+    gps = read_gps(data.get('gps')) if device_state == 'KNOWN' else None
+    gname = gps_name(gps) if gps else ''
+    if gps and not (vpn or travel):
+        lat, lng, city = gps[0], gps[1], gname
+    else:
+        lat, lng, city = place_of(geo, vpn)
+    if gps and (vpn or travel):
+        real, real_text = {'real_city': gname, 'real_lat': gps[0], 'real_lng': gps[1], 'real_src': 'gps'}, f"실제 위치(GPS): {gname}"
+    else:
+        real, real_text = real_place(leak_geo, last, now) if (vpn or travel) else ({}, '')
 
     log_id = save_log(cur, {'ip': ip, 'ua': clip(data.get('ua'), 300), 'res': clip(data.get('res'), 20), 'tz': browser_tz,
                             'lat': lat, 'lng': lng, 'city': city, 'score': score, 'platform': plat, 'timestamp': fmt_time(now),
@@ -847,7 +872,7 @@ def api_export():
     for r in reversed(rows):
         real = r.get('real_city') or ''
         if real:
-            real += ' (WebRTC)' if r.get('real_src') == 'webrtc' else ' (직전 정상 위치)'
+            real += {'webrtc': ' (WebRTC)', 'gps': ''}.get(r.get('real_src'), ' (직전 정상 위치)')
         w.writerow([r['id'], r.get('timestamp'), r.get('ip'), r.get('city'), real, r.get('country') or '', r.get('platform'),
                     r.get('tz'), r.get('lang') or '', r.get('score'), r.get('status') or '',
                     {1: '통과', -1: '차단'}.get(r.get('verified'), ''), r.get('device') or '', 'Y' if r.get('simulated') else '',
@@ -923,7 +948,8 @@ SCENARIOS = {
     'vpn': {'title': '해외 VPN 우회', 'desc': '등록 기기에서 캐나다 VPN을 켜고 접속',
             'ip': '198.51.100.20', 'tz': 'Asia/Seoul', 'lang': 'ko-KR', 'device': 'KNOWN',
             'geo': {'country': 'Canada', 'countryCode': 'CA', 'regionName': 'Ontario', 'city': 'Toronto', 'lat': 43.70, 'lon': -79.40,
-                    'timezone': 'America/Toronto', 'proxy': True, 'hosting': True}},
+                    'timezone': 'America/Toronto', 'proxy': True, 'hosting': True},
+            'real': ('전북 전주시 (GPS)', 35.82, 127.14, 'gps')},
     'tz_spoof': {'title': '시간대까지 위조한 우회', 'desc': '기기 시간대를 미국으로 바꾸고 일반 회선으로 접속, 5분 전엔 전주에 있었음',
                  'ip': '198.51.100.30', 'tz': 'America/Los_Angeles', 'lang': 'ko-KR', 'device': 'KNOWN', 'travel': (35.82, 127.14, 5),
                  'real': ('South Korea Jeonbuk Jeonju', 35.82, 127.14, 'last'),

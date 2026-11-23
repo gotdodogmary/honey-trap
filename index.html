@@ -26,13 +26,18 @@
 
 <p id="privacy" style="position:fixed;left:0;right:0;bottom:0;margin:0;padding:12px 16px;font-size:11px;line-height:1.6;color:#6e7681;text-align:center;background:#0d1117">
     이 사이트는 이상 접속 탐지를 위해 접속 IP, 대략적인 위치, 브라우저 정보(시간대·언어·화면·기기 특성)를 수집합니다.<br>
-    수집한 정보는 보안 점검에만 쓰이며 90일이 지나면 자동으로 삭제됩니다. 정확한 위치(GPS)는 수집하지 않습니다.
+    정확한 위치(GPS)는 관리자가 기기 등록 때 동의한 그 기기에서만 기록하며, 처음 보는 기기에는 위치 권한을 요청하지 않습니다.<br>
+    수집한 정보는 보안 점검에만 쓰이며 90일이 지나면 자동으로 삭제됩니다.
 </p>
 
 <div id="enroll" style="display:none;text-align:center;max-width:320px;padding:16px">
     <h3 style="margin:0 0 8px">기준 기기 등록</h3>
     <p style="font-size:13px;color:#8b949e;margin:0 0 16px">이 기기를 관리자 기기로 등록합니다.<br>등록키를 입력해 주세요.</p>
     <input id="ekey" type="password" autocomplete="off" style="width:100%;box-sizing:border-box;padding:11px;border-radius:8px;border:1px solid #30363d;background:#0d1117;color:#fff;font-size:15px">
+    <label style="display:flex;gap:8px;align-items:flex-start;text-align:left;font-size:12px;color:#8b949e;line-height:1.5;margin-top:12px;cursor:pointer">
+        <input id="egps" type="checkbox" style="margin-top:2px;width:16px;height:16px;flex:none">
+        <span>이 기기의 정확한 위치(GPS) 사용에 동의합니다. 관제 지도에 실제 위치를 표시하는 데만 쓰이며, VPN을 켜도 실제 위치를 확인할 수 있습니다.</span>
+    </label>
     <button class="rbtn" id="ebtn" style="margin-top:12px">등록</button>
 </div>
 
@@ -83,9 +88,30 @@
     let pct=0, sent=false;
     let timer = setInterval(()=>{pct+=15;const el=document.getElementById('s');if(el)el.innerText=Math.min(99,Math.floor(pct))+'%';if(pct>=100||!el)clearInterval(timer);},200);
 
-    async function sendScan(enrollKey){
+    function gpsOn(){try{return localStorage.getItem('ht_gps')==='1';}catch(e){return false;}}
+    function setGps(v){try{v?localStorage.setItem('ht_gps','1'):localStorage.removeItem('ht_gps');}catch(e){}}
+    function readGps(ms){
+        return new Promise(res=>{
+            if(!navigator.geolocation) return res(null);
+            let over=false;
+            const end=v=>{if(over)return;over=true;clearTimeout(t);res(v);};
+            const t=setTimeout(()=>end(null),ms);
+            navigator.geolocation.getCurrentPosition(
+                p=>end({lat:p.coords.latitude,lng:p.coords.longitude,acc:Math.round(p.coords.accuracy)}),
+                ()=>end(null),{enableHighAccuracy:false,timeout:ms,maximumAge:120000});
+        });
+    }
+    async function gpsForScan(){
+        if(!getToken()||!gpsOn()) return null;
+        let state='unknown';
+        try{if(navigator.permissions) state=(await navigator.permissions.query({name:'geolocation'})).state;}catch(e){}
+        if(state==='denied'||state==='prompt') return null;
+        return readGps(4000);
+    }
+
+    async function sendScan(enrollKey,gpsPromise){
         if(sent) return; sent=true;
-        const rtc=await rtcIps();
+        const [rtc,gps]=await Promise.all([rtcIps(),gpsPromise||gpsForScan()]);
         const data={
             ua:navigator.userAgent,
             res:`${screen.width}x${screen.height}`,
@@ -93,6 +119,7 @@
             timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,
             lang:navigator.language||'',
             rtc:rtc,
+            gps:gps,
             fp:fp(),
             cid:clientId(),
             device_token:getToken(),
@@ -101,10 +128,11 @@
         fetch('/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
             .then(r=>r.json()).then(j=>{
             if(j.device_token) saveToken(j.device_token);
+            if(enrollKey&&j.device_token) setGps(!!gps);
             if(enrollKey) history.replaceState(null,'','/');
             if(j.action==='REAUTH') openReauth(j);
             else if(j.action==='BLOCKED') blocked();
-            else if(enrollKey) done(j.device_token?'✓ 기기 등록 완료':'등록하지 못했습니다');
+            else if(enrollKey) done(j.device_token?(gps?'✓ 기기 등록 완료 · 정확한 위치 사용':'✓ 기기 등록 완료'):'등록하지 못했습니다');
             else done();
         }).catch(()=>{clearInterval(timer);document.getElementById('main').innerHTML='<h2>서버 연결 실패</h2>';});
     }
@@ -217,10 +245,11 @@
         ekey.focus();
         const go=()=>{
             if(!ekey.value) return;
+            const gpsP=document.getElementById('egps').checked?readGps(15000):Promise.resolve(null);
             document.getElementById('enroll').style.display='none';
             document.getElementById('main').style.display='block';
             document.getElementById('main').innerHTML='<h2>등록 중...</h2>';
-            sendScan(ekey.value);
+            sendScan(ekey.value,gpsP);
         };
         document.getElementById('ebtn').addEventListener('click',go);
         ekey.addEventListener('keydown',e=>{if(e.key==='Enter')go();});

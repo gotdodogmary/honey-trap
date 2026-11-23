@@ -204,6 +204,45 @@ class FlowTest(Base):
         self.assertIsNone(self.last_log()['real_city'])
 
 
+class GpsTest(Base):
+    GPS = {'lat': 35.8467, 'lng': 127.1294, 'acc': 20}
+
+    def test_gps_pins_registered_device(self):
+        token = self.enroll(gps=self.GPS)
+        self.assertAlmostEqual(self.last_log()['lat'], 35.8467)
+        self.scan('121.154.59.135', device_token=token, gps=self.GPS)
+        log = self.last_log()
+        self.assertEqual((log['lat'], log['lng'], log['status']), (35.8467, 127.1294, 'SECURE'))
+        self.assertTrue(log['city'].startswith('GPS 35.847'))
+        self.assertIsNone(log['real_city'])
+
+    def test_gps_is_real_location_behind_vpn(self):
+        a.TELEGRAM_BOT_TOKEN, a.TELEGRAM_CHAT_ID = 'T', 'C'
+        SENT.clear()
+        token = self.enroll(gps=self.GPS)
+        self.scan('149.88.98.165', device_token=token, gps=self.GPS)
+        log = self.last_log()
+        self.assertIn('Toronto', log['city'])
+        self.assertEqual((log['real_src'], log['real_lat'], log['real_lng']), ('gps', 35.8467, 127.1294))
+        import time
+        for _ in range(40):
+            if any('실제 위치(GPS)' in m.get('text', '') for m in SENT):
+                break
+            time.sleep(0.05)
+        self.assertTrue(any('실제 위치(GPS)' in m.get('text', '') for m in SENT))
+
+    def test_gps_from_unknown_device_is_ignored(self):
+        self.scan('121.154.59.135', cid='cid-gps-unknown1', gps=self.GPS)
+        self.assertAlmostEqual(self.last_log()['lat'], 37.56)
+        self.scan('149.88.98.165', cid='cid-gps-unknown1', gps=self.GPS)
+        self.assertNotEqual(self.last_log()['real_src'], 'gps')
+
+    def test_bad_gps_values(self):
+        for v in (None, 'x', {'lat': 'a', 'lng': 1}, {'lat': 200, 'lng': 1}, {'lat': 0, 'lng': 0}, {'lat': 35, 'lng': 127, 'acc': 9999}):
+            self.assertIsNone(a.read_gps(v))
+        self.assertEqual(a.read_gps(self.GPS), (35.8467, 127.1294, 20))
+
+
 class LookupTest(unittest.TestCase):
     def test_city_from_api_timezone_from_geolite(self):
         local = {'country': 'South Korea', 'countryCode': 'KR', 'regionName': 'Daejeon', 'city': 'Daejeon', 'lat': 36.35, 'lon': 127.38,

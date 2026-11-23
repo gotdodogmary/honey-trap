@@ -83,7 +83,7 @@
 </div>
 
 <div id="mapwrap"><div id="map"></div>
-    <div class="legend"><div><span class="dot" style="background:#2ea043"></span>SECURE</div><div><span class="dot" style="background:#e3b341"></span>SUSPICIOUS</div><div><span class="dot" style="background:#f85149"></span>INTRUSION</div><div><span style="color:#f85149">━▶</span> 같은 기기 위치 급변</div><div><span style="color:#a371f7">◯┈▶</span> 추정 실제 위치</div></div>
+    <div class="legend"><div><span class="dot" style="background:#2ea043"></span>SECURE</div><div><span class="dot" style="background:#e3b341"></span>SUSPICIOUS</div><div><span class="dot" style="background:#f85149"></span>INTRUSION</div><div><span style="color:#f85149">━▶</span> 같은 기기 위치 급변</div><div><span style="color:#a371f7">◯┈▶</span> 실제·추정 위치</div></div>
 </div>
 
 <div class="panels">
@@ -146,7 +146,7 @@
     }
     function realLabel(l){
         const name=String(l.real_city||'');
-        return (l.real_src==='webrtc'?'추정 실제 위치: ':'직전 정상 위치: ')+(name.length>22?name.slice(0,21)+'…':name);
+        return ({webrtc:'추정 실제 위치: ',gps:'실제 위치(GPS): '}[l.real_src]||'직전 정상 위치: ')+(name.length>22?name.slice(0,21)+'…':name);
     }
     function pinLabel(name){
         name=name||'';
@@ -205,7 +205,7 @@
         return `<tr id="r${esc(l.id)}">
       <td>${esc(l.timestamp)}${sim?'<span class="sim">시뮬레이션</span>':''}</td>
       <td>${esc(l.ip)}${l.lang?`<span class="sub">${esc(l.lang)}</span>`:''}</td>
-      <td>📍 ${esc(l.city)}<span class="sub">${esc(l.lat)}, ${esc(l.lng)}</span>${hasReal(l)?`<span class="sub" style="color:#d2b8ff">${l.real_src==='webrtc'?'🎯 추정 실제 위치':'↩ 직전 정상 위치'}: ${esc(l.real_city)}</span>`:''}</td>
+      <td>📍 ${esc(l.city)}<span class="sub">${esc(l.lat)}, ${esc(l.lng)}</span>${hasReal(l)?`<span class="sub" style="color:#d2b8ff">${({webrtc:'🎯 추정 실제 위치',gps:'📍 실제 위치(GPS)'}[l.real_src]||'↩ 직전 정상 위치')}: ${esc(l.real_city)}</span>`:''}</td>
       <td>${iconFor(l.platform)}</td>
       <td><span class="score">${esc(l.score)}</span>${reasons}</td>
       <td><span class="badge b-${st}">${st==='INTRUSION'?'⚠ ':''}${st}</span>${authTag(l.verified)}</td>
