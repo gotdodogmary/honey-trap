@@ -191,12 +191,13 @@
         const end=[a[0]+(b[0]-a[0])*0.95,a[1]+(b[1]-a[1])*0.95];
         pathSource.addFeature(new ol.Feature({geometry:new ol.geom.LineString([a,end]),kind:'real'}));
     }
-    function iconFor(p){p=(p||'').toLowerCase();if(p.includes('simulation'))return '🧪 시뮬레이션';if(p.includes('mac'))return '🍎 Mac';if(p.includes('iphone'))return '📱 iPhone';if(p.includes('win'))return '💻 Windows';return '📱 '+esc(p);}
+    function iconFor(p){p=(p||'').toLowerCase();if(p.includes('simulation'))return '🧪 시뮬레이션';if(p.includes('ipad'))return '📱 iPad';if(p.includes('mac'))return '🍎 Mac';if(p.includes('iphone'))return '📱 iPhone';if(p.includes('win'))return '💻 Windows';return '📱 '+esc(p);}
     function authTag(v){
         if(v==1) return '<span class="sub" style="color:#3fb950">✓ 재인증 통과</span>';
         if(v==-1) return '<span class="sub" style="color:#ff7b72">⛔ 재인증 실패·차단</span>';
         return '';
     }
+    const LOCNOTE={denied:'⚠ 위치 권한 거부 → IP 기준',timeout:'⚠ 위치 응답 없음 → IP 기준',unavailable:'⚠ 위치 못 찾음 → IP 기준',unsupported:'⚠ 위치 기능 없음 → IP 기준'};
     function rowHtml(l){
         const st=statusOf(l);
         const reasons=(l.reasons||[]).map(r=>`<span class="reason"><b>+${esc(r.points)}</b> ${esc(r.detail)}</span>`).join('');
@@ -205,7 +206,7 @@
         return `<tr id="r${esc(l.id)}">
       <td>${esc(l.timestamp)}${sim?'<span class="sim">시뮬레이션</span>':''}</td>
       <td>${esc(l.ip)}${l.lang?`<span class="sub">${esc(l.lang)}</span>`:''}</td>
-      <td>📍 ${esc(l.city)}<span class="sub">${esc(l.lat)}, ${esc(l.lng)}</span>${hasReal(l)?`<span class="sub" style="color:#d2b8ff">${({webrtc:'🎯 추정 실제 위치',gps:'📍 실제 위치(GPS)'}[l.real_src]||'↩ 직전 정상 위치')}: ${esc(l.real_city)}</span>`:''}</td>
+      <td>📍 ${esc(l.city)}<span class="sub">${esc(l.lat)}, ${esc(l.lng)}</span>${LOCNOTE[l.loc_status]?`<span class="sub" style="color:#e3b341">${LOCNOTE[l.loc_status]}</span>`:''}${hasReal(l)?`<span class="sub" style="color:#d2b8ff">${({webrtc:'🎯 추정 실제 위치',gps:'📍 실제 위치(GPS)'}[l.real_src]||'↩ 직전 정상 위치')}: ${esc(l.real_city)}</span>`:''}</td>
       <td>${iconFor(l.platform)}</td>
       <td><span class="score">${esc(l.score)}</span>${reasons}</td>
       <td><span class="badge b-${st}">${st==='INTRUSION'?'⚠ ':''}${st}</span>${authTag(l.verified)}</td>

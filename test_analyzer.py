@@ -257,8 +257,15 @@ class GpsTest(Base):
         self.assertEqual(self.last_log()['real_src'], 'gps')
 
     def test_without_gps_falls_back_to_ip(self):
-        self.scan('121.154.59.135', cid='cid-gps-denied01')
-        self.assertAlmostEqual(self.last_log()['lat'], 37.56)
+        self.scan('121.154.59.135', cid='cid-gps-denied01', gps_status='denied')
+        log = self.last_log()
+        self.assertAlmostEqual(log['lat'], 37.56)
+        self.assertTrue(log['city'].endswith('(IP 추정)'))
+        self.assertEqual(log['loc_status'], 'denied')
+        self.scan('121.154.59.135', cid='cid-gps-denied01', gps=self.GPS, gps_status='ok')
+        self.assertEqual(self.last_log()['loc_status'], 'ok')
+        self.scan('121.154.59.135', cid='cid-gps-denied01', gps_status='<script>')
+        self.assertIsNone(self.last_log()['loc_status'])
 
     def test_gps_does_not_change_score(self):
         self.scan('149.88.98.165', cid='cid-gps-score001')

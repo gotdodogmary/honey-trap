@@ -496,7 +496,8 @@ def calc_score(browser_tz, geo, device_state, travel=None, blocked=None, lang=No
 def init_db():
     cols = (('status', 'TEXT'), ('reasons', 'TEXT'), ('verified', 'INTEGER DEFAULT 0'), ('device', 'TEXT'),
             ('country', 'TEXT'), ('lang', 'TEXT'), ('simulated', 'INTEGER DEFAULT 0'),
-            ('real_city', 'TEXT'), ('real_lat', 'DOUBLE PRECISION'), ('real_lng', 'DOUBLE PRECISION'), ('real_src', 'TEXT'))
+            ('real_city', 'TEXT'), ('real_lat', 'DOUBLE PRECISION'), ('real_lng', 'DOUBLE PRECISION'), ('real_src', 'TEXT'),
+            ('loc_status', 'TEXT'))
     conn = get_conn(); cur = conn.cursor()
     if DATABASE_URL:
         cur.execute('''CREATE TABLE IF NOT EXISTS logs
@@ -639,11 +640,11 @@ def security_headers(resp):
 
 def save_log(cur, row):
     sql = ("INSERT INTO logs (ip,ua,res,tz,lat,lng,city,score,platform,timestamp,status,reasons,verified,device,country,lang,simulated,"
-           "real_city,real_lat,real_lng,real_src) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+           "real_city,real_lat,real_lng,real_src,loc_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     values = (row['ip'], row.get('ua', ''), row.get('res', ''), row['tz'], row['lat'], row['lng'], row['city'], row['score'],
               row['platform'], row['timestamp'], row['status'], json.dumps(row['reasons'], ensure_ascii=False),
               row.get('verified', 0), row.get('device', ''), row.get('country'), row.get('lang', ''), row.get('simulated', 0),
-              row.get('real_city'), row.get('real_lat'), row.get('real_lng'), row.get('real_src'))
+              row.get('real_city'), row.get('real_lat'), row.get('real_lng'), row.get('real_src'), row.get('loc_status'))
     if DATABASE_URL:
         cur.execute(q(sql) + ' RETURNING id', values)
         return cur.fetchone()[0]
@@ -756,10 +757,13 @@ def scan():
     vpn = any(r['code'] in ('TZ_MISMATCH', 'PROXY_IP', 'HOSTING_IP', 'WEBRTC_LEAK') for r in reasons)
     gps = read_gps(data.get('gps'))
     gname = gps_name(gps) if gps else ''
+    loc_status = 'ok' if gps else (data.get('gps_status') if data.get('gps_status') in ('denied', 'timeout', 'unavailable', 'unsupported') else None)
     if gps and not (vpn or travel):
         lat, lng, city = gps[0], gps[1], gname
     else:
         lat, lng, city = place_of(geo, vpn)
+        if not vpn and city != UNKNOWN_PLACE:
+            city += ' (IP 추정)'
     if gps and (vpn or travel):
         real, real_text = {'real_city': gname, 'real_lat': gps[0], 'real_lng': gps[1], 'real_src': 'gps'}, f"실제 위치(GPS): {gname}"
     else:
@@ -768,7 +772,7 @@ def scan():
     log_id = save_log(cur, {'ip': ip, 'ua': clip(data.get('ua'), 300), 'res': clip(data.get('res'), 20), 'tz': browser_tz,
                             'lat': lat, 'lng': lng, 'city': city, 'score': score, 'platform': plat, 'timestamp': fmt_time(now),
                             'status': status, 'reasons': reasons, 'verified': -1 if blocked else 0, 'device': device,
-                            'country': (geo or {}).get('countryCode'), 'lang': lang, **real})
+                            'country': (geo or {}).get('countryCode'), 'lang': lang, 'loc_status': loc_status, **real})
 
     resp = {"status": "success", "device_token": new_token, "action": "ALLOW"}
     if enroll_error:
