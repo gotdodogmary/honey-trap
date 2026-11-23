@@ -336,7 +336,7 @@
             document.getElementById('caseList').innerHTML=t.cases.map(c=>`<div class="case"><span class="lab">${c.label==='attack'?'공격':'정상'}</span><span>${esc(c.name)}<br><span class="lab">${esc(c.reasons.join(', ')||'감점 없음')}</span></span><span class="sc">${c.score}</span></div>`).join('');
         });
         fetch('/api/settings').then(r=>r.json()).then(s=>{
-            document.getElementById('sysNote').innerText=`위치 조회: ${s.geolite==='사용 중'?'GeoLite2 로컬 DB':'웹 API (GeoLite2 '+s.geolite+')'} · 인증 번호: ${s.otp.length?s.otp.join('·')+' 발송':'고정 번호'} · 기록 보관 ${s.retention_days}일`;
+            document.getElementById('sysNote').innerText=`위치 조회: ${s.geolite==='사용 중'?'GeoLite2(나라·시간대) + 웹 API(도시)':'웹 API (GeoLite2 '+s.geolite+')'} · 인증 번호: ${s.otp.length?s.otp.join('·')+' 발송':'고정 번호'} · 기록 보관 ${s.retention_days}일`;
         });
     }
     document.getElementById('lineSave').addEventListener('click',()=>{

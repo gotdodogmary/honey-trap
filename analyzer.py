@@ -297,6 +297,10 @@ def lookup_ip(ip):
     if local:
         if geo:
             local['proxy'], local['hosting'] = bool(geo.get('proxy')), bool(geo.get('hosting'))
+            if geo.get('lat') is not None and geo.get('countryCode') == local.get('countryCode'):
+                for k in ('regionName', 'city', 'lat', 'lon'):
+                    local[k] = geo.get(k)
+                local['source'] = 'GeoLite2+API'
         geo = local
     if geo is not None:
         _geo_cache[ip] = (time.time(), geo)

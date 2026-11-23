@@ -36,6 +36,7 @@ GEO = {
     '8.8.4.4': {'country': 'United States', 'countryCode': 'US', 'regionName': 'California', 'city': 'Los Angeles',
                 'lat': 34.05, 'lon': -118.24, 'timezone': 'America/Los_Angeles', 'proxy': False, 'hosting': False},
 }
+REAL_LOOKUP = a.lookup_ip
 a.lookup_ip = lambda ip: GEO.get(ip)
 SENT = []
 a._send = lambda url, **kw: SENT.append(kw.get('json') or {})
@@ -201,6 +202,30 @@ class FlowTest(Base):
         token = self.enroll()
         self.scan('121.154.59.135', device_token=token)
         self.assertIsNone(self.last_log()['real_city'])
+
+
+class LookupTest(unittest.TestCase):
+    def test_city_from_api_timezone_from_geolite(self):
+        local = {'country': 'South Korea', 'countryCode': 'KR', 'regionName': 'Daejeon', 'city': 'Daejeon', 'lat': 36.35, 'lon': 127.38,
+                 'timezone': 'Asia/Seoul', 'proxy': False, 'hosting': False, 'source': 'GeoLite2'}
+        api = {'status': 'success', 'country': 'South Korea', 'countryCode': 'KR', 'regionName': 'Jeollabuk-do', 'city': 'Jeonju',
+               'lat': 35.82, 'lon': 127.14, 'timezone': 'Asia/Seoul', 'proxy': False, 'hosting': False}
+        class R:
+            def json(self): return api
+        old_local, old_get = a.geolite_lookup, a.requests.get
+        a.geolite_lookup = lambda ip: dict(local)
+        a.requests.get = lambda *x, **k: R()
+        try:
+            a._geo_cache.clear()
+            g = REAL_LOOKUP('203.0.113.200')
+            self.assertEqual((g['city'], g['lat'], g['timezone'], g['source']), ('Jeonju', 35.82, 'Asia/Seoul', 'GeoLite2+API'))
+            api['status'] = 'fail'
+            a._geo_cache.clear()
+            g = REAL_LOOKUP('203.0.113.201')
+            self.assertEqual((g['city'], g['source']), ('Daejeon', 'GeoLite2'))
+        finally:
+            a.geolite_lookup, a.requests.get = old_local, old_get
+            a._geo_cache.clear()
 
 
 class AdminTest(Base):
