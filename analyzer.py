@@ -45,6 +45,7 @@ WEIGHTS = {
     'UNKNOWN_DEVICE': 30,
     'LANG_MISMATCH': 20,
     'PROXY_IP': 20,
+    'IP_HIDDEN': 10,
     'HOSTING_IP': 15,
     'UNUSUAL_HOUR': 15,
     'BLOCKED': 100,
@@ -57,6 +58,7 @@ REASON_NAMES = {
     'UNKNOWN_DEVICE': '미등록 기기',
     'LANG_MISMATCH': '언어·국가 불일치',
     'PROXY_IP': '프록시·VPN IP',
+    'IP_HIDDEN': 'IP 가림(비공개 릴레이 등)',
     'HOSTING_IP': '데이터센터 IP',
     'UNUSUAL_HOUR': '평소와 다른 접속 시간',
     'BLOCKED': '차단된 IP·기기',
@@ -455,11 +457,15 @@ def calc_score(browser_tz, geo, device_state, travel=None, blocked=None, lang=No
         reasons.append(('BLOCKED', blocked))
     if geo:
         ip_tz = geo.get('timezone')
+        tz_bad = False
         if ip_tz and ip_tz != browser_tz:
             same_country = TZ_COUNTRY.get(browser_tz) and TZ_COUNTRY.get(browser_tz) == geo.get('countryCode')
             if not same_country:
+                tz_bad = True
                 reasons.append(('TZ_MISMATCH', f"브라우저 {browser_tz} / IP {ip_tz}"))
-        if geo.get('proxy'):
+        if geo.get('proxy') and not geo.get('hosting') and not tz_bad:
+            reasons.append(('IP_HIDDEN', '같은 나라의 IP 가림 서비스 (아이폰 IP 주소 가리기 등)'))
+        elif geo.get('proxy'):
             reasons.append(('PROXY_IP', '프록시/VPN 대역 IP'))
         if geo.get('hosting'):
             reasons.append(('HOSTING_IP', '데이터센터 IP'))
@@ -661,6 +667,7 @@ def scan():
     new_token = None
     did, saved_fp = read_device_token(str(data.get('device_token', '')))
     enroll_ok = False
+    enroll_error = None
     if data.get('enroll'):
         conn = get_conn(); cur = conn.cursor()
         if fail_count(cur, ['ip:' + ip]) < FAIL_LIMIT:
@@ -668,6 +675,10 @@ def scan():
             if not enroll_ok:
                 add_fail(cur, ['ip:' + ip])
                 conn.commit()
+                left = FAIL_LIMIT - fail_count(cur, ['ip:' + ip])
+                enroll_error = f'등록키가 틀렸습니다. (남은 시도 {left}회)' if left > 0 else f'등록키를 여러 번 틀려 {FAIL_WINDOW_HOURS}시간 동안 잠겼습니다.'
+        else:
+            enroll_error = f'등록키를 여러 번 틀려 {FAIL_WINDOW_HOURS}시간 동안 잠겼습니다.'
         conn.close()
     if enroll_ok:
         new_token = make_device_token(fp, did)
@@ -707,7 +718,7 @@ def scan():
     unusual = check_hour(cur, device, now)
     score, status, reasons = calc_score(browser_tz, geo, device_state, travel, blocked, check_lang(lang, geo), leak, unusual)
     vpn = any(r['code'] in ('TZ_MISMATCH', 'PROXY_IP', 'HOSTING_IP', 'WEBRTC_LEAK') for r in reasons)
-    gps = read_gps(data.get('gps')) if device_state == 'KNOWN' else None
+    gps = read_gps(data.get('gps'))
     gname = gps_name(gps) if gps else ''
     if gps and not (vpn or travel):
         lat, lng, city = gps[0], gps[1], gname
@@ -724,6 +735,8 @@ def scan():
                             'country': (geo or {}).get('countryCode'), 'lang': lang, **real})
 
     resp = {"status": "success", "device_token": new_token, "action": "ALLOW"}
+    if enroll_error:
+        resp['enroll_error'] = enroll_error
     if blocked:
         resp.update(action='BLOCKED', device_token=None)
     elif status == 'INTRUSION':

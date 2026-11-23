@@ -33,6 +33,8 @@ GEO = {
                       'lat': 43.70, 'lon': -79.40, 'timezone': 'America/Toronto', 'proxy': True, 'hosting': True},
     '149.88.98.170': {'country': 'Canada', 'countryCode': 'CA', 'regionName': 'Ontario', 'city': 'Toronto',
                       'lat': 43.70, 'lon': -79.40, 'timezone': 'America/Toronto', 'proxy': False, 'hosting': True},
+    '104.28.84.49': {'country': 'South Korea', 'countryCode': 'KR', 'regionName': 'Seoul', 'city': 'Seoul',
+                     'lat': 37.5658, 'lon': 126.978, 'timezone': 'Asia/Seoul', 'proxy': True, 'hosting': False},
     '8.8.4.4': {'country': 'United States', 'countryCode': 'US', 'regionName': 'California', 'city': 'Los Angeles',
                 'lat': 34.05, 'lon': -118.24, 'timezone': 'America/Los_Angeles', 'proxy': False, 'hosting': False},
 }
@@ -87,6 +89,19 @@ class ScoringTest(Base):
         geo = dict(GEO['8.8.4.4'], timezone='America/New_York')
         _, _, reasons = a.calc_score('America/Los_Angeles', geo, 'KNOWN', line=60)
         self.assertNotIn('TZ_MISMATCH', [r['code'] for r in reasons])
+
+    def test_private_relay_is_not_vpn(self):
+        score, status, reasons = a.calc_score('Asia/Seoul', GEO['104.28.84.49'], 'KNOWN', line=60)
+        self.assertEqual([r['code'] for r in reasons], ['IP_HIDDEN'])
+        self.assertEqual((score, status), (10, 'SECURE'))
+        _, _, reasons = a.calc_score('America/New_York', GEO['104.28.84.49'], 'KNOWN', line=60)
+        self.assertIn('PROXY_IP', [r['code'] for r in reasons])
+
+    def test_private_relay_has_no_vpn_label(self):
+        self.scan('104.28.84.49', cid='cid-relay-iphone1')
+        log = self.last_log()
+        self.assertNotIn('VPN', log['city'])
+        self.assertEqual(log['score'], 40)
 
     def test_threshold_boundary(self):
         self.assertEqual(a.calc_score('Asia/Seoul', GEO['211.214.20.58'], 'UNKNOWN', line=60)[1], 'SUSPICIOUS')
@@ -172,6 +187,8 @@ class FlowTest(Base):
     def test_wrong_enroll_key(self):
         r = self.scan('121.154.59.135', enroll='nope')
         self.assertIsNone(r['device_token'])
+        self.assertIn('등록키가 틀렸습니다', r['enroll_error'])
+        self.assertIn('남은 시도 5회', r['enroll_error'])
 
     def test_webrtc_leak_gives_real_city(self):
         SENT.clear()
@@ -231,11 +248,22 @@ class GpsTest(Base):
             time.sleep(0.05)
         self.assertTrue(any('실제 위치(GPS)' in m.get('text', '') for m in SENT))
 
-    def test_gps_from_unknown_device_is_ignored(self):
+    def test_gps_from_any_visitor_is_used(self):
         self.scan('121.154.59.135', cid='cid-gps-unknown1', gps=self.GPS)
-        self.assertAlmostEqual(self.last_log()['lat'], 37.56)
+        log = self.last_log()
+        self.assertEqual((log['lat'], log['status']), (35.8467, 'SUSPICIOUS'))
         self.scan('149.88.98.165', cid='cid-gps-unknown1', gps=self.GPS)
-        self.assertNotEqual(self.last_log()['real_src'], 'gps')
+        self.assertEqual(self.last_log()['real_src'], 'gps')
+
+    def test_without_gps_falls_back_to_ip(self):
+        self.scan('121.154.59.135', cid='cid-gps-denied01')
+        self.assertAlmostEqual(self.last_log()['lat'], 37.56)
+
+    def test_gps_does_not_change_score(self):
+        self.scan('149.88.98.165', cid='cid-gps-score001')
+        without = self.last_log()['score']
+        self.scan('149.88.98.165', cid='cid-gps-score002', gps=self.GPS)
+        self.assertEqual(self.last_log()['score'], without)
 
     def test_bad_gps_values(self):
         for v in (None, 'x', {'lat': 'a', 'lng': 1}, {'lat': 200, 'lng': 1}, {'lat': 0, 'lng': 0}, {'lat': 35, 'lng': 127, 'acc': 9999}):
